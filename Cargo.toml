@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/vaultdbai/nandi-spec"
+authors = ["VaultDB.ai"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Same version and features as the Nandi app, so its generated TypeScript
+# bindings don't change
+specta = { version = "=2.0.0-rc.22", features = ["derive", "serde_json"] }

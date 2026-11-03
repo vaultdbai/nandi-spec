@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vaultdbai/nandi-registry/registry-schema/publisher.schema.json",
+  "title": "Nandi registry publisher",
+  "description": "Someone who publishes agents or packs (publishers/<github_handle>.json).",
+  "type": "object",
+  "required": ["github_handle", "display_name", "created_at"],
+  "properties": {
+    "github_handle": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$"
+    },
+    "display_name": { "type": "string", "minLength": 1 },
+    "public_key": {
+      "type": "string",
+      "pattern": "^ed25519:[A-Za-z0-9+/]{43}=$",
+      "description": "ed25519 public key as ed25519:<base64>. Omitted by publishers who don't sign releases"
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

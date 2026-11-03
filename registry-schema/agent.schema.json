@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vaultdbai/nandi-registry/registry-schema/agent.schema.json",
+  "title": "Nandi registry agent",
+  "description": "One agent in a Nandi registry (agents/<id>.json). Authoritative for the in-app marketplace and the static website.",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "description",
+    "publisher",
+    "repo",
+    "path",
+    "latest_version",
+    "tags",
+    "min_nandi_version",
+    "capabilities",
+    "icon_url",
+    "readme_url"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Unique within the registry; also the agent's folder name when installed"
+    },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "publisher": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
+      "description": "GitHub handle of the publisher (see publisher.schema.json)"
+    },
+    "repo": {
+      "type": "string",
+      "description": "Where the agent's source lives, e.g. github.com/user/repo"
+    },
+    "path": {
+      "type": "string",
+      "description": "The agent's folder within repo, e.g. agents/arxiv-researcher"
+    },
+    "latest_version": { "$ref": "#/$defs/semver" },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "min_nandi_version": { "$ref": "#/$defs/semver" },
+    "capabilities": { "$ref": "#/$defs/capabilities" },
+    "icon_url": { "type": "string", "format": "uri" },
+    "readme_url": { "type": "string", "format": "uri" },
+
+    "install_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Reserved"
+    },
+    "rating": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 5,
+      "description": "Reserved"
+    },
+    "verified": {
+      "type": "boolean",
+      "description": "Reserved: the registry maintainers vouch for this agent"
+    },
+    "signature": {
+      "type": "string",
+      "description": "Reserved: the publisher's ed25519 signature over the release"
+    },
+    "deprecated": {
+      "type": "boolean",
+      "description": "Reserved: still installable, hidden from discovery"
+    },
+    "license": {
+      "type": "string",
+      "description": "Reserved: SPDX license identifier"
+    }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:[+][0-9A-Za-z.-]+)?$"
+    },
+    "capabilities": {
+      "type": "object",
+      "description": "What the agent requests; the user approves these at install",
+      "required": ["tools", "network", "pilots"],
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "MCP tools it may call"
+        },
+        "network": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Hosts it may reach through the egress proxy"
+        },
+        "pilots": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Pilot capabilities (OS control), e.g. screen.read"
+        },
+        "connectors": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Connectors from Library › Tools it uses, by ID, e.g. s3_backup"
+        }
+      }
+    }
+  }
+}

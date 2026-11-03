@@ -1,0 +1,18 @@
+[package]
+name = "nandi-protocol"
+version = "0.1.0"
+description = "The Nandi relay wire protocol: the messages and HTTP bodies a relay and its clients exchange"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+# `specta::Type` on every wire type, for apps that export them to TypeScript
+specta = ["dep:specta"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+specta = { workspace = true, optional = true }

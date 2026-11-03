@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The channel and components come from rust-toolchain.toml
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: |
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --all-targets --features specta -- -D warnings
+
+      - name: Tests
+        run: |
+          cargo test
+          cargo test --features specta
