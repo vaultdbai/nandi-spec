@@ -7,7 +7,7 @@ Open formats for [Nandi](https://github.com/vaultdbai/nandi): capability files, 
 | Path                     | What                                                            |
 | ------------------------ | --------------------------------------------------------------- |
 | `registry-schema/`       | JSON Schemas for registry files (agents, packs, publishers)     |
-| `crates/nandi-protocol` | Rust crate: every message and HTTP body a relay and clients use |
+| `crates/nandi-protocol`  | Rust crate: every message and HTTP body a relay and clients use |
 
 ## Rule
 
