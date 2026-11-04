@@ -13,6 +13,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::gateway::GatewayCard;
+use crate::keys::PublicKeys;
 use crate::time::Timestamp;
 
 /// The capability a person's own agent serves for questions about them; a
@@ -76,6 +77,9 @@ pub struct MemberRecord {
     pub online: bool,
     /// When the relay last heard from them (epoch ms)
     pub last_seen_ms: Timestamp,
+    /// The keys the relay pinned for them; `None` until they send some
+    #[serde(default)]
+    pub public_keys: Option<PublicKeys>,
 }
 
 /// What one of a person's agents serves

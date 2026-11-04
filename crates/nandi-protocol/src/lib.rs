@@ -7,6 +7,7 @@
 //! - [`card`], [`gateway`], [`presence`]: what instances publish about
 //!   themselves
 //! - [`directory`]: the member directory, availability and people search
+//! - [`keys`]: per-instance public keys and sealed envelopes
 //! - [`task`], [`clarification`]: delegated work and its questions
 //! - [`time`]: timestamps on the wire
 //!
@@ -20,6 +21,7 @@ pub mod clarification;
 pub mod directory;
 pub mod gateway;
 pub mod http;
+pub mod keys;
 pub mod message;
 pub mod presence;
 pub mod task;
@@ -36,6 +38,7 @@ pub use http::{
     split_token, EnrollRequest, EnrollResponse, RelayHealth, RelayInstanceInfo, DEFAULT_RELAY_PORT,
     JOIN_CODE_ENV, PROBE_PAYLOAD, RELAY_PATH, SECRET_ENV,
 };
+pub use keys::{Envelope, PublicKeys, SealPurpose, SealedFor, KEY_MISMATCH, SEAL_SUITE};
 pub use message::{
     DutyState, PeerDelivery, PeerMessage, RelayMessage, TaskAssigned, TaskCompleted, TaskFailed,
     ALL_CAPABILITIES, VERSION_MISMATCH,
@@ -49,7 +52,9 @@ pub use time::{now_ms, Timestamp};
 /// - 1: versions on registration and `/health`
 /// - 2: the member directory (`QueryDirectory`) and people search
 ///   (`FindPeople`)
-pub const PROTOCOL_VERSION: u32 = 2;
+/// - 3: per-instance public keys at enrollment and registration, pinned
+///   by the relay (`key_mismatch`) and carried in the directory
+pub const PROTOCOL_VERSION: u32 = 3;
 
 #[cfg(test)]
 pub(crate) mod fixtures;

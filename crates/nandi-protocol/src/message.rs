@@ -6,7 +6,8 @@
 //!
 //! `RegisterInstance` carries the client's [`crate::PROTOCOL_VERSION`]. A
 //! relay that speaks another version refuses it with an `Error` whose code
-//! is [`VERSION_MISMATCH`].
+//! is [`VERSION_MISMATCH`]. It also carries the instance's public keys,
+//! which the relay pins (see [`crate::keys`]).
 //!
 //! Offline: every request here has a reply or a timeout on the client; a
 //! client that isn't connected reports "not connected" and keeps working
@@ -22,6 +23,7 @@ use crate::card::AgentCard;
 use crate::clarification::{ClarificationRequest, ClarificationResponse};
 use crate::directory::{MemberRecord, PeopleMatch};
 use crate::gateway::GatewayCard;
+use crate::keys::PublicKeys;
 use crate::presence::{CapabilityPresence, InstancePresence};
 use crate::task::{ReasonKind, Task, TaskResult, TaskState};
 use crate::time::Timestamp;
@@ -48,6 +50,11 @@ pub enum RelayMessage {
         /// The [`crate::PROTOCOL_VERSION`] the instance speaks
         #[serde(default)]
         protocol_version: u32,
+        /// The instance's keys. The relay pins them on first sight and
+        /// refuses others with [`crate::KEY_MISMATCH`]; left out, the pin
+        /// stays as it is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        public_keys: Option<PublicKeys>,
     },
     /// Every 30s; `load` is running tasks per agent ID
     Heartbeat {
@@ -378,6 +385,10 @@ mod tests {
                 capabilities: vec![],
                 tools: vec![],
                 protocol_version: crate::PROTOCOL_VERSION,
+                public_keys: Some(PublicKeys {
+                    signing: "s".repeat(43),
+                    sealing: "x".repeat(43),
+                }),
             },
             RelayMessage::Heartbeat {
                 instance_id: "i1".into(),
@@ -445,6 +456,7 @@ mod tests {
                     card: gateway_card(),
                     online: false,
                     last_seen_ms: 9.0,
+                    public_keys: None,
                 }],
             },
             RelayMessage::FindPeople {
@@ -615,13 +627,14 @@ mod tests {
             signature: "s".into(),
             capabilities: vec![],
             tools: vec![],
-            protocol_version: 2,
+            protocol_version: 3,
+            public_keys: None,
         })
         .unwrap();
         assert_eq!(
             value,
             json!({"type": "register_instance", "instanceId": "i1", "agentCards": [],
-                   "signature": "s", "protocolVersion": 2})
+                   "signature": "s", "protocolVersion": 3})
         );
         // A client that doesn't say reads as version 0
         let old = RelayMessage::from_json(

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::card::AgentCard;
 use crate::gateway::GatewayCard;
+use crate::keys::PublicKeys;
 use crate::time::Timestamp;
 
 /// Default port of a relay
@@ -68,6 +69,9 @@ pub struct EnrollRequest {
     pub instance_id: String,
     #[serde(default)]
     pub join_code: String,
+    /// The instance's keys, which the relay pins for its ID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_keys: Option<PublicKeys>,
 }
 
 /// The relay's answer to an accepted [`EnrollRequest`]: the token this
@@ -137,6 +141,7 @@ mod tests {
         let request = EnrollRequest {
             instance_id: "i1".into(),
             join_code: "code".into(),
+            public_keys: None,
         };
         assert_eq!(
             serde_json::to_value(&request).unwrap(),

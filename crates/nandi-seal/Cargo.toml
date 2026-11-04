@@ -1,0 +1,22 @@
+[package]
+name = "nandi-seal"
+version = "0.1.0"
+description = "Nandi's end-to-end seal: per-device keys, sealed envelopes and signed content"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+nandi-protocol = { path = "../nandi-protocol" }
+base64 = "0.22"
+# RFC 9180 HPKE (rozbb/rust-hpke): base mode, X25519-HKDF-SHA256 with
+# ChaCha20-Poly1305. `getrandom` gives the ephemeral keys and new device
+# keys their randomness
+hpke = { version = "0.15.1", default-features = false, features = ["alloc", "x25519", "chacha", "getrandom"] }
+# The same curve25519 and rand_core generation as hpke 0.15
+ed25519-dalek = "3"
+getrandom = "0.4"
+sha2 = "0.11"
+zeroize = "1"

@@ -1,0 +1,195 @@
+//! Per-instance keys and sealed envelopes: the shapes on the wire. The
+//! crypto that makes and opens them is the `nandi-seal` crate; a relay
+//! carries these without linking it.
+//!
+//! - Every instance (device) has its own [`PublicKeys`]: an Ed25519 key
+//!   that signs content and an X25519 key that envelopes are sealed to.
+//!   They're sent at enrollment and registration, and the relay pins them:
+//!   another key for the same instance ID is refused with the `Error` code
+//!   [`KEY_MISMATCH`] until the operator rekeys it.
+//! - An [`Envelope`] is content sealed for one recipient. Its
+//!   [`SealedFor`] is in the clear (the relay routes by it) and bound into
+//!   the seal, so moving a blob to another task, person or purpose breaks
+//!   it.
+//!
+//! Offline: keys and envelopes are data; nothing here talks to the relay.
+
+use serde::{Deserialize, Serialize};
+
+/// The seal construction an [`Envelope`] uses (see `nandi-seal`)
+pub const SEAL_SUITE: &str = "nandi-seal-v1";
+
+/// The `Error` code (and HTTP refusal) for an instance that shows up with
+/// other keys than the ones the relay pinned for it
+pub const KEY_MISMATCH: &str = "key_mismatch";
+
+/// Length of a 32-byte key in unpadded base64url
+const KEY_CHARS: usize = 43;
+
+/// An instance's public keys, each 32 bytes in unpadded base64url.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
+pub struct PublicKeys {
+    /// Ed25519: verifies what this instance signs
+    pub signing: String,
+    /// X25519: what envelopes for this instance are sealed to
+    pub sealing: String,
+}
+
+impl PublicKeys {
+    /// Whether both keys look like 32 bytes of unpadded base64url. The
+    /// relay checks this before pinning; `nandi-seal` checks the points.
+    pub fn is_well_formed(&self) -> bool {
+        [&self.signing, &self.sealing].into_iter().all(|key| {
+            key.len() == KEY_CHARS
+                && key
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+    }
+}
+
+/// What a sealed envelope carries, as the sender meant it
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
+pub enum SealPurpose {
+    /// The task's input, requester → provider
+    Request,
+    /// The task's output or error, provider → requester
+    Result,
+    /// Questions, provider → requester
+    Clarification,
+    /// Answers, requester → provider
+    Answer,
+    /// Free text on a lifecycle message (a note, a reason)
+    Note,
+}
+
+impl SealPurpose {
+    /// The serde name; also what the seal binds
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Request => "request",
+            Self::Result => "result",
+            Self::Clarification => "clarification",
+            Self::Answer => "answer",
+            Self::Note => "note",
+        }
+    }
+}
+
+/// Who and what an envelope is for. In the clear, and bound into the seal
+/// as its associated data.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
+pub struct SealedFor {
+    pub task_id: String,
+    /// The envelope's place in its task, from 0; the receiver drops a
+    /// `(task_id, seq)` it has already opened
+    pub seq: u64,
+    /// The sender's instance ID
+    pub from: String,
+    /// The recipient's instance ID
+    pub to: String,
+    pub purpose: SealPurpose,
+    pub capability: String,
+}
+
+/// Content sealed for one recipient ([`SEAL_SUITE`]). Bytes are unpadded
+/// base64url.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(rename_all = "camelCase")]
+pub struct Envelope {
+    /// [`SEAL_SUITE`]
+    pub suite: String,
+    pub sealed_for: SealedFor,
+    /// The sender's key ID (`nandi-seal`'s `key_id` of its public keys)
+    pub sender_key_id: String,
+    /// The recipient's key ID, so a recipient with new keys knows at once
+    /// that an envelope wasn't sealed for them
+    pub recipient_key_id: String,
+    /// The sender's encapsulated ephemeral key
+    pub enc: String,
+    /// The sealed, signed content and its tag
+    pub ciphertext: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn keys() -> PublicKeys {
+        PublicKeys {
+            signing: "A".repeat(43),
+            sealing: "b-_9".repeat(10) + "xyz",
+        }
+    }
+
+    #[test]
+    fn keys_are_well_formed_only_as_43_base64url_characters() {
+        assert!(keys().is_well_formed());
+        for bad in [
+            "A".repeat(42),
+            "A".repeat(44),
+            "A".repeat(42) + "=",
+            "A".repeat(42) + "+",
+        ] {
+            let mut wrong = keys();
+            wrong.sealing = bad;
+            assert!(!wrong.is_well_formed());
+        }
+    }
+
+    #[test]
+    fn envelopes_are_camel_case() {
+        let envelope = Envelope {
+            suite: SEAL_SUITE.into(),
+            sealed_for: SealedFor {
+                task_id: "t1".into(),
+                seq: 2,
+                from: "i1".into(),
+                to: "i2".into(),
+                purpose: SealPurpose::Request,
+                capability: "write".into(),
+            },
+            sender_key_id: "aa".into(),
+            recipient_key_id: "bb".into(),
+            enc: "e".into(),
+            ciphertext: "c".into(),
+        };
+        let value = serde_json::to_value(&envelope).unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "suite": "nandi-seal-v1",
+                "sealedFor": {"taskId": "t1", "seq": 2, "from": "i1", "to": "i2",
+                              "purpose": "request", "capability": "write"},
+                "senderKeyId": "aa", "recipientKeyId": "bb", "enc": "e", "ciphertext": "c"
+            })
+        );
+        assert_eq!(serde_json::from_value::<Envelope>(value).unwrap(), envelope);
+        assert_eq!(
+            serde_json::to_value(keys()).unwrap(),
+            json!({"signing": keys().signing, "sealing": keys().sealing})
+        );
+    }
+
+    #[test]
+    fn purposes_round_trip_through_their_names() {
+        for purpose in [
+            SealPurpose::Request,
+            SealPurpose::Result,
+            SealPurpose::Clarification,
+            SealPurpose::Answer,
+            SealPurpose::Note,
+        ] {
+            assert_eq!(serde_json::to_value(purpose).unwrap(), purpose.as_str());
+        }
+    }
+}
