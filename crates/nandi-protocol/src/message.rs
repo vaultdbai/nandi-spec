@@ -2,7 +2,8 @@
 //! each, tagged by `type` (`{"type": "heartbeat", "instanceId": "…", …}`).
 //!
 //! `QueryCapability` with the capability [`ALL_CAPABILITIES`] (`*`) asks
-//! for every registered card (presence).
+//! for every registered card (presence). Picking who gets a request is
+//! `RouteQuery` → `RoutePlan` (see [`crate::routing`]).
 //!
 //! `RegisterInstance` carries the client's [`crate::PROTOCOL_VERSION`]. A
 //! relay that speaks another version refuses it with an `Error` whose code
@@ -31,6 +32,7 @@ use crate::directory::{MemberRecord, PeopleMatch};
 use crate::gateway::GatewayCard;
 use crate::keys::{Envelope, InstanceKeys, PublicKeys};
 use crate::presence::{CapabilityPresence, InstancePresence};
+use crate::routing::{RoutePlan, RoutingQuery};
 use crate::task::{ReasonKind, ResultReport, SealedTask, TaskState};
 use crate::time::Timestamp;
 
@@ -178,6 +180,19 @@ pub enum RelayMessage {
     Undeliverable {
         target_instance: String,
         body: PeerMessage,
+    },
+
+    // Routing (see `routing`)
+    /// Instance → relay: who should get a request. `query_id` is the
+    /// client's, echoed in the answer.
+    RouteQuery {
+        query_id: String,
+        query: RoutingQuery,
+    },
+    /// Relay → instance: the candidates, best first
+    RoutePlan {
+        query_id: String,
+        plan: RoutePlan,
     },
 
     // Wave A: capability presence (Track D)
@@ -460,6 +475,9 @@ mod tests {
     use crate::directory::{Availability, MatchedAgent, ServedCapability};
     use crate::fixtures::{card, envelope, gateway_card, report, sealed_task};
     use crate::keys::{SealPurpose, MAX_ENVELOPE_BYTES};
+    use crate::routing::{
+        NoRoute, RequestKind, RouteCandidate, RouteReason, RouteStrategy, RouteTarget, RoutingHints,
+    };
 
     fn every_message() -> Vec<RelayMessage> {
         vec![
@@ -612,6 +630,67 @@ mod tests {
                 target_instance: "i2".into(),
                 body: PeerMessage::StatusQuery {
                     task_id: "t1".into(),
+                },
+            },
+            RelayMessage::RouteQuery {
+                query_id: "q1".into(),
+                query: RoutingQuery {
+                    kind: RequestKind::Assign,
+                    capability: crate::directory::ASK_ME.into(),
+                    target: RouteTarget::Person {
+                        instance_id: "i2".into(),
+                    },
+                    hints: RoutingHints {
+                        preferred: vec!["i2/papers".into()],
+                        excluded: vec!["i3".into()],
+                        strategy: Some(RouteStrategy::RoundRobin),
+                        required_tools: vec!["builtin.shell".into()],
+                        max_candidates: Some(2),
+                    },
+                },
+            },
+            RelayMessage::RoutePlan {
+                query_id: "q1".into(),
+                plan: RoutePlan {
+                    plan_id: "p1".into(),
+                    expires_at: 9.0,
+                    candidates: vec![RouteCandidate {
+                        target: "i2/papers".into(),
+                        instance_id: "i2".into(),
+                        name: "Bob".into(),
+                        handle: Some("bob".into()),
+                        agent_name: "Papers".into(),
+                        provider_kind: crate::ProviderKind::Agent,
+                        online: true,
+                        load: 3,
+                        max_concurrent: 3,
+                        wait_seconds: Some(1200),
+                        redirected_from: Some("i4".into()),
+                        reasons: vec![
+                            RouteReason::Covers {
+                                name: "Bob".into(),
+                                away_name: "Alice".into(),
+                                until: Some(7.0),
+                            },
+                            RouteReason::Busy {
+                                name: "Bob".into(),
+                                load: 3,
+                                max: 3,
+                                wait_minutes: Some(20),
+                            },
+                        ],
+                        public_keys: None,
+                    }],
+                    no_route: None,
+                },
+            },
+            RelayMessage::RoutePlan {
+                query_id: "q2".into(),
+                plan: RoutePlan {
+                    plan_id: "p2".into(),
+                    expires_at: 9.0,
+                    candidates: vec![],
+                    no_route: Some(NoRoute::NotTakingRequests),
                 },
             },
         ]

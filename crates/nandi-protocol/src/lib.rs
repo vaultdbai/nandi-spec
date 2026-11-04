@@ -7,6 +7,7 @@
 //! - [`card`], [`gateway`], [`presence`]: what instances publish about
 //!   themselves
 //! - [`directory`]: the member directory, availability and people search
+//! - [`routing`]: who gets a request (`RouteQuery` → `RoutePlan`)
 //! - [`keys`]: per-instance public keys and sealed envelopes
 //! - [`content`]: what each sealed envelope holds
 //! - [`task`], [`clarification`]: delegated work and its questions
@@ -26,6 +27,7 @@ pub mod http;
 pub mod keys;
 pub mod message;
 pub mod presence;
+pub mod routing;
 pub mod task;
 pub mod time;
 
@@ -53,6 +55,10 @@ pub use message::{
     ALL_CAPABILITIES, VERSION_MISMATCH,
 };
 pub use presence::{CapabilityPresence, InstancePresence, ProviderKind, ProviderPresence};
+pub use routing::{
+    NoRoute, RequestKind, RouteCandidate, RoutePlan, RouteReason, RouteStrategy, RouteTarget,
+    RoutingHints, RoutingQuery, DEFAULT_MAX_CANDIDATES, MAX_CANDIDATES,
+};
 pub use task::{
     DelegationDirection, ReasonKind, ResultReport, SealedTask, Task, TaskResult, TaskState,
     TaskStatus,
@@ -69,7 +75,8 @@ pub use time::{now_ms, Timestamp};
 /// - 4: every person-to-person payload sealed (`envelope` replaces
 ///   `input`, `output`, `error`, notes, reasons, questions and answers),
 ///   `PublicKeysQuery`, the envelope cap (`envelope_too_large`)
-pub const PROTOCOL_VERSION: u32 = 4;
+/// - 5: routing at the relay (`RouteQuery` → `RoutePlan`, see [`routing`])
+pub const PROTOCOL_VERSION: u32 = 5;
 
 #[cfg(test)]
 pub(crate) mod fixtures;
