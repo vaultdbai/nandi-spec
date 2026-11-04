@@ -1,13 +1,20 @@
 //! Delegated work: a [`Task`] one agent sends another, its [`TaskResult`],
 //! and the states and reasons both sides report while it runs.
+//!
+//! [`Task`] and [`TaskResult`] are the opened forms, with their content.
+//! They never cross the relay: on the wire a task is a [`SealedTask`] and
+//! a result a [`ResultReport`], their content sealed in an envelope (see
+//! [`crate::content`]).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::card::AgentCard;
+use crate::keys::Envelope;
 use crate::time::Timestamp;
 
-/// A unit of work one agent asks another to do.
+/// A unit of work one agent asks another to do. Opened: the wire carries
+/// a [`SealedTask`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +28,35 @@ pub struct Task {
     pub input: Value,
     pub created_at: Timestamp,
     pub deadline: Option<Timestamp>,
+}
+
+/// A [`Task`] on the wire: its metadata in the clear, its input sealed for
+/// the provider ([`crate::content::RequestContent`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealedTask {
+    pub id: String,
+    /// The requesting agent's card
+    pub requester: AgentCard,
+    /// Target card ID (`<instance_id>/<agent_id>`)
+    pub target: String,
+    pub capability: String,
+    pub created_at: Timestamp,
+    pub deadline: Option<Timestamp>,
+    /// The input, sealed for the provider by the requester, or resealed
+    /// by the provider it was reassigned from
+    pub envelope: Envelope,
+    /// The earlier attempt this one carries on, when `envelope` is a
+    /// reseal of that attempt's request (its `sealedFor.taskId`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continues: Option<String>,
+}
+
+impl SealedTask {
+    /// The task ID `envelope` must be sealed under
+    pub fn sealed_task_id(&self) -> &str {
+        self.continues.as_deref().unwrap_or(&self.id)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,7 +120,8 @@ impl DelegationDirection {
     }
 }
 
-/// A delegated task's outcome; also a `delegations` history row.
+/// A delegated task's outcome; also a `delegations` history row. Opened:
+/// the wire carries a [`ResultReport`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
@@ -109,6 +146,30 @@ pub struct TaskResult {
     pub input: Value,
     pub started_at: Timestamp,
     pub ended_at: Option<Timestamp>,
+}
+
+/// A [`TaskResult`] on the wire (provider → requester): the metadata in
+/// the clear, the output and error sealed for the requester
+/// ([`crate::content::ResultContent`]). The requester has the input.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResultReport {
+    pub task_id: String,
+    /// Provider card ID
+    pub provider_agent: String,
+    /// Requester card ID
+    pub requester_agent: String,
+    pub capability: String,
+    pub status: TaskStatus,
+    pub duration_ms: u32,
+    pub tokens_in: u32,
+    pub tokens_out: u32,
+    /// GitHub handles of the two sides, when known
+    pub provider_owner: Option<String>,
+    pub requester_owner: Option<String>,
+    pub started_at: Timestamp,
+    pub ended_at: Option<Timestamp>,
+    pub envelope: Envelope,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

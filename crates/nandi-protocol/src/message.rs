@@ -9,6 +9,14 @@
 //! is [`VERSION_MISMATCH`]. It also carries the instance's public keys,
 //! which the relay pins (see [`crate::keys`]).
 //!
+//! Content is sealed. Every person-to-person payload (a task's input, its
+//! output and error, questions, answers, notes, reasons) travels in an
+//! [`Envelope`] sealed for the recipient; the relay reads only the
+//! metadata beside it (IDs, capability, kind, state, typed reason, ETA,
+//! progress, place in line, deadline, display names). What each envelope
+//! holds is in [`crate::content`]. A relay refuses a frame whose envelope
+//! is over [`crate::MAX_ENVELOPE_BYTES`] ([`crate::ENVELOPE_TOO_LARGE`]).
+//!
 //! Offline: every request here has a reply or a timeout on the client; a
 //! client that isn't connected reports "not connected" and keeps working
 //! (cards it last saw, its own agents locally). `Peer` messages to an
@@ -17,15 +25,13 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::card::AgentCard;
-use crate::clarification::{ClarificationRequest, ClarificationResponse};
 use crate::directory::{MemberRecord, PeopleMatch};
 use crate::gateway::GatewayCard;
-use crate::keys::PublicKeys;
+use crate::keys::{Envelope, InstanceKeys, PublicKeys};
 use crate::presence::{CapabilityPresence, InstancePresence};
-use crate::task::{ReasonKind, Task, TaskResult, TaskState};
+use crate::task::{ReasonKind, ResultReport, SealedTask, TaskState};
 use crate::time::Timestamp;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -65,9 +71,10 @@ pub enum RelayMessage {
     Deregister {
         instance_id: String,
     },
+    /// The output and error sealed for the requester
     TaskResult {
         task_id: String,
-        result: TaskResult,
+        result: ResultReport,
         signature: String,
     },
 
@@ -81,10 +88,14 @@ pub enum RelayMessage {
         /// Target card ID (`<instance_id>/<agent_id>`)
         target_agent: String,
         capability: String,
-        input: Value,
         requester_card: AgentCard,
         deadline: Option<Timestamp>,
         signature: String,
+        /// The input, sealed for the target's instance
+        envelope: Envelope,
+        /// See [`SealedTask::continues`]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        continues: Option<String>,
     },
 
     // Relay → both
@@ -103,6 +114,16 @@ pub enum RelayMessage {
     Error {
         code: String,
         message: String,
+    },
+
+    // Keys (see `keys`)
+    /// Instance → relay: the keys pinned for these instances
+    PublicKeysQuery {
+        instance_ids: Vec<String>,
+    },
+    /// Relay → instance: one entry per ID asked, in that order
+    PublicKeysResult {
+        keys: Vec<InstanceKeys>,
     },
 
     // Gateway cards (see `gateway`)
@@ -180,7 +201,9 @@ pub enum RelayMessage {
 }
 
 /// Task lifecycle and clarification traffic between requester and
-/// provider (wave final, Tracks B and C), tagged by `kind`.
+/// provider (wave final, Tracks B and C), tagged by `kind`. Free text,
+/// questions, answers and results go in an `envelope` sealed for the
+/// target (see [`crate::content`]); the rest is metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -188,33 +211,39 @@ pub enum RelayMessage {
     rename_all_fields = "camelCase"
 )]
 pub enum PeerMessage {
-    /// Provider → requester: accepted, with an estimate
+    /// Provider → requester: accepted, with an estimate (and a sealed
+    /// note)
     AcknowledgeTask {
         task_id: String,
         eta_seconds: Option<u32>,
-        note: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        envelope: Option<Envelope>,
     },
-    /// Provider → requester: refused (policy, trust, capacity)
+    /// Provider → requester: refused (policy, trust, capacity), with the
+    /// reason sealed
     RejectTask {
         task_id: String,
-        reason: String,
         /// Why, as the requester's UI matches it to a fix; `None` when
         /// there is no typed reason
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason_kind: Option<ReasonKind>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        envelope: Option<Envelope>,
     },
     /// Provider → requester, only when the task asked for progress (a hold
     /// or a place in line is always sent)
     ProgressUpdate {
         task_id: String,
         percent: Option<u8>,
-        note: Option<String>,
         /// Why it waits, when it waits (held for approval, queued)
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason_kind: Option<ReasonKind>,
         /// 1-based place in the provider's line, while queued
         #[serde(default, skip_serializing_if = "Option::is_none")]
         queue_position: Option<u32>,
+        /// The note
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        envelope: Option<Envelope>,
     },
     /// Requester → provider
     StatusQuery { task_id: String },
@@ -224,29 +253,39 @@ pub enum PeerMessage {
         state: TaskState,
         eta_seconds: Option<u32>,
         elapsed_seconds: u32,
-        /// Once it ended: its result, so a requester that was offline when
-        /// it was sent still gets it (a lasting assignment)
+        /// Once it ended: its output and error, so a requester that was
+        /// offline when the result was sent still gets it (a lasting
+        /// assignment)
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        result: Option<serde_json::Value>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
+        envelope: Option<Envelope>,
     },
-    /// Either side
+    /// Either side, with the reason sealed
     CancelTask {
         task_id: String,
-        reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        envelope: Option<Envelope>,
     },
     /// Provider → requester: the task reached the provider
     TaskDelivered { task_id: String },
-    /// Requester → provider: gave up waiting
+    /// Requester → provider: gave up waiting, with the reason sealed
     TaskTimedOut {
         task_id: String,
-        reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        envelope: Option<Envelope>,
     },
-    /// Provider → requester
-    ClarificationRequest(ClarificationRequest),
-    /// Requester → provider
-    ClarificationResponse(ClarificationResponse),
+    /// Provider → requester: questions, sealed
+    ClarificationRequest {
+        task_id: String,
+        /// 1-based
+        round: u32,
+        envelope: Envelope,
+    },
+    /// Requester → provider: answers, sealed
+    ClarificationResponse {
+        task_id: String,
+        round: u32,
+        envelope: Envelope,
+    },
     /// Requester → provider: nobody answered in time
     ClarificationTimeout { task_id: String },
     /// Provider → requester (wave EF): send this task to
@@ -260,13 +299,27 @@ pub enum PeerMessage {
         new_provider_name: Option<String>,
         /// Who reassigned it (display name)
         by: String,
-        reason: Option<String>,
+        /// The reason, sealed for the requester
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        envelope: Option<Envelope>,
+        /// The task's request, resealed by the provider for the new
+        /// provider (the requester's signature kept). The requester sends
+        /// it on as the next attempt's envelope, with `continues` set to
+        /// this task.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request: Option<Box<Envelope>>,
     },
     /// A calendar trigger's backup → its primary: how is this duty going?
     /// (`duty_id` is `<trigger>/<date>/<time>`, see `domain::calendar`)
     DutyQuery { duty_id: String },
-    /// Primary → backup
-    DutyStatus { duty_id: String, state: DutyState },
+    /// Primary → backup; a failure's error is sealed (a note bound to the
+    /// duty ID)
+    DutyStatus {
+        duty_id: String,
+        state: DutyState,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        envelope: Option<Envelope>,
+    },
 }
 
 /// How a calendar trigger's primary is doing with one scheduled fire, as
@@ -287,9 +340,8 @@ pub enum DutyState {
         since: i64,
     },
     Completed,
-    Failed {
-        error: Option<String>,
-    },
+    /// Its error, if any, is in the `DutyStatus` envelope
+    Failed,
     /// Due, but no run was started (trigger off, rate limited, or missing)
     NotRun,
 }
@@ -307,41 +359,52 @@ impl PeerMessage {
             | Self::TaskDelivered { task_id }
             | Self::TaskTimedOut { task_id, .. }
             | Self::ClarificationTimeout { task_id }
+            | Self::ClarificationRequest { task_id, .. }
+            | Self::ClarificationResponse { task_id, .. }
             | Self::ReassignTask { task_id, .. } => task_id,
             // Not a task; its ID never matches one
             Self::DutyQuery { duty_id } | Self::DutyStatus { duty_id, .. } => duty_id,
-            Self::ClarificationRequest(request) => &request.task_id,
-            Self::ClarificationResponse(response) => &response.task_id,
+        }
+    }
+
+    /// Every envelope it carries
+    pub fn envelopes(&self) -> Vec<&Envelope> {
+        match self {
+            Self::AcknowledgeTask { envelope, .. }
+            | Self::RejectTask { envelope, .. }
+            | Self::ProgressUpdate { envelope, .. }
+            | Self::StatusResponse { envelope, .. }
+            | Self::CancelTask { envelope, .. }
+            | Self::TaskTimedOut { envelope, .. }
+            | Self::DutyStatus { envelope, .. } => envelope.iter().collect(),
+            Self::ClarificationRequest { envelope, .. }
+            | Self::ClarificationResponse { envelope, .. } => vec![envelope],
+            Self::ReassignTask {
+                envelope, request, ..
+            } => envelope.iter().chain(request.as_deref()).collect(),
+            Self::StatusQuery { .. }
+            | Self::TaskDelivered { .. }
+            | Self::ClarificationTimeout { .. }
+            | Self::DutyQuery { .. } => Vec::new(),
         }
     }
 }
 
-/// A `Peer` (or `Undeliverable`) message as the receiving client sees it
-#[derive(Debug, Clone, PartialEq)]
-pub struct PeerDelivery {
-    /// Who sent it (for `Undeliverable`: us)
-    pub from_instance: String,
-    pub target_instance: String,
-    pub body: PeerMessage,
-    /// The relay couldn't reach `target_instance`; `body` is ours, returned
-    pub undeliverable: bool,
-}
-
-/// A task reached a provider. The provider's handler runs it; the
-/// requester's handler only learns where it went.
+/// A task reached a provider. The provider's Nandi opens and runs it; the
+/// requester's (with no task) only learns where it went.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskAssigned {
     pub task_id: String,
     pub provider_instance: String,
-    pub task: Option<Task>,
+    pub task: Option<SealedTask>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskCompleted {
     pub task_id: String,
-    pub result: TaskResult,
+    pub result: ResultReport,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -358,6 +421,28 @@ pub const ALL_CAPABILITIES: &str = "*";
 pub const VERSION_MISMATCH: &str = "version_mismatch";
 
 impl RelayMessage {
+    /// Every envelope it carries (to check [`crate::MAX_ENVELOPE_BYTES`])
+    pub fn envelopes(&self) -> Vec<&Envelope> {
+        match self {
+            Self::DelegateTask { envelope, .. } => vec![envelope],
+            Self::TaskResult { result, .. } => vec![&result.envelope],
+            Self::TaskAssigned(assigned) => assigned
+                .task
+                .as_ref()
+                .map(|task| vec![&task.envelope])
+                .unwrap_or_default(),
+            Self::TaskCompleted(completed) => vec![&completed.result.envelope],
+            Self::Peer { body, .. } | Self::Undeliverable { body, .. } => body.envelopes(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether every envelope it carries is within
+    /// [`crate::MAX_ENVELOPE_BYTES`]
+    pub fn envelopes_within_limit(&self) -> bool {
+        self.envelopes().iter().all(|e| e.is_within_limit())
+    }
+
     /// One JSON text frame
     pub fn to_json(&self) -> Result<String, String> {
         serde_json::to_string(self).map_err(|e| format!("Failed to encode a relay message: {e}"))
@@ -372,9 +457,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::clarification::Question;
     use crate::directory::{Availability, MatchedAgent, ServedCapability};
-    use crate::fixtures::{card, gateway_card, result, task};
+    use crate::fixtures::{card, envelope, gateway_card, report, sealed_task};
+    use crate::keys::{SealPurpose, MAX_ENVELOPE_BYTES};
 
     fn every_message() -> Vec<RelayMessage> {
         vec![
@@ -400,7 +485,7 @@ mod tests {
             },
             RelayMessage::TaskResult {
                 task_id: "t1".into(),
-                result: result(),
+                result: report(),
                 signature: "sig".into(),
             },
             RelayMessage::QueryCapability {
@@ -411,10 +496,39 @@ mod tests {
                 task_id: "t1".into(),
                 target_agent: "i2/writer".into(),
                 capability: "write".into(),
-                input: json!({"topic": "rust"}),
                 requester_card: card(),
                 deadline: None,
                 signature: "sig".into(),
+                envelope: envelope(SealPurpose::Request),
+                continues: None,
+            },
+            RelayMessage::DelegateTask {
+                task_id: "t2".into(),
+                target_agent: "i3/writer".into(),
+                capability: "write".into(),
+                requester_card: card(),
+                deadline: Some(9.0),
+                signature: "sig".into(),
+                envelope: envelope(SealPurpose::Request),
+                continues: Some("t1".into()),
+            },
+            RelayMessage::PublicKeysQuery {
+                instance_ids: vec!["i2".into()],
+            },
+            RelayMessage::PublicKeysResult {
+                keys: vec![
+                    InstanceKeys {
+                        instance_id: "i2".into(),
+                        public_keys: Some(PublicKeys {
+                            signing: "s".repeat(43),
+                            sealing: "x".repeat(43),
+                        }),
+                    },
+                    InstanceKeys {
+                        instance_id: "i9".into(),
+                        public_keys: None,
+                    },
+                ],
             },
             RelayMessage::Registered {
                 instance_id: "i1".into(),
@@ -426,7 +540,7 @@ mod tests {
             RelayMessage::TaskAssigned(TaskAssigned {
                 task_id: "t1".into(),
                 provider_instance: "i2".into(),
-                task: Some(task()),
+                task: Some(sealed_task()),
             }),
             RelayMessage::TaskAssigned(TaskAssigned {
                 task_id: "t1".into(),
@@ -435,7 +549,7 @@ mod tests {
             }),
             RelayMessage::TaskCompleted(TaskCompleted {
                 task_id: "t1".into(),
-                result: result(),
+                result: report(),
             }),
             RelayMessage::TaskFailed(TaskFailed {
                 task_id: "t1".into(),
@@ -519,26 +633,26 @@ mod tests {
             PeerMessage::AcknowledgeTask {
                 task_id: "t1".into(),
                 eta_seconds: Some(30),
-                note: None,
+                envelope: None,
             },
             PeerMessage::RejectTask {
                 task_id: "t1".into(),
-                reason: "busy".into(),
                 reason_kind: Some(ReasonKind::NotTrusted),
+                envelope: Some(envelope(SealPurpose::Note)),
             },
             PeerMessage::ProgressUpdate {
                 task_id: "t1".into(),
                 percent: Some(50),
-                note: Some("halfway".into()),
                 reason_kind: None,
                 queue_position: None,
+                envelope: Some(envelope(SealPurpose::Note)),
             },
             PeerMessage::ProgressUpdate {
                 task_id: "t1".into(),
                 percent: None,
-                note: Some("in line".into()),
                 reason_kind: Some(ReasonKind::Queued),
                 queue_position: Some(2),
+                envelope: None,
             },
             PeerMessage::StatusQuery {
                 task_id: "t1".into(),
@@ -548,43 +662,36 @@ mod tests {
                 state: TaskState::Working,
                 eta_seconds: Some(10),
                 elapsed_seconds: 20,
-                result: None,
-                error: None,
+                envelope: None,
             },
             PeerMessage::StatusResponse {
                 task_id: "t1".into(),
                 state: TaskState::Completed,
                 eta_seconds: None,
                 elapsed_seconds: 90,
-                result: Some(serde_json::json!({ "done": true })),
-                error: None,
+                envelope: Some(envelope(SealPurpose::Result)),
             },
             PeerMessage::CancelTask {
                 task_id: "t1".into(),
-                reason: None,
+                envelope: None,
             },
             PeerMessage::TaskDelivered {
                 task_id: "t1".into(),
             },
             PeerMessage::TaskTimedOut {
                 task_id: "t1".into(),
-                reason: Some("3x ETA".into()),
+                envelope: Some(envelope(SealPurpose::Note)),
             },
-            PeerMessage::ClarificationRequest(ClarificationRequest {
+            PeerMessage::ClarificationRequest {
                 task_id: "t1".into(),
                 round: 1,
-                questions: vec![Question {
-                    id: "q1".into(),
-                    question: "Which year?".into(),
-                    topic: "scope".into(),
-                    requires_human: false,
-                }],
-            }),
-            PeerMessage::ClarificationResponse(ClarificationResponse {
+                envelope: envelope(SealPurpose::Clarification),
+            },
+            PeerMessage::ClarificationResponse {
                 task_id: "t1".into(),
                 round: 1,
-                answers: HashMap::from([("q1".to_string(), "2024".to_string())]),
-            }),
+                envelope: envelope(SealPurpose::Answer),
+            },
             PeerMessage::ClarificationTimeout {
                 task_id: "t1".into(),
             },
@@ -677,6 +784,62 @@ mod tests {
     }
 
     #[test]
+    fn envelopes_are_found_wherever_a_message_carries_one() {
+        let counts: Vec<usize> = every_message()
+            .iter()
+            .map(|message| message.envelopes().len())
+            .collect();
+        assert_eq!(counts.iter().sum::<usize>(), 11, "{counts:?}");
+        for message in every_message() {
+            assert!(message.envelopes_within_limit());
+        }
+        let mut big = envelope(SealPurpose::Request);
+        big.ciphertext = "c".repeat(MAX_ENVELOPE_BYTES);
+        let message = RelayMessage::Peer {
+            from_instance: "i1".into(),
+            target_instance: "i2".into(),
+            body: PeerMessage::ReassignTask {
+                task_id: "t1".into(),
+                new_provider_instance: "i3".into(),
+                new_provider_card: "i3/writer".into(),
+                new_provider_name: None,
+                by: "Ada".into(),
+                envelope: Some(envelope(SealPurpose::Note)),
+                request: Some(Box::new(big)),
+            },
+        };
+        assert_eq!(message.envelopes().len(), 2);
+        assert!(!message.envelopes_within_limit());
+    }
+
+    #[test]
+    fn no_content_field_crosses_in_the_clear() {
+        // The content fields of protocol 3 are gone. (`TaskFailed` and
+        // `Error` carry the relay's own words, not a person's.)
+        for message in every_message() {
+            if matches!(
+                message,
+                RelayMessage::TaskFailed(_) | RelayMessage::Error { .. }
+            ) {
+                continue;
+            }
+            let text = message.to_json().unwrap();
+            for field in [
+                "\"input\":",
+                "\"output\":",
+                "\"note\":",
+                "\"reason\":",
+                "\"questions\":",
+                "\"answers\":",
+                "\"error\":\"",
+                "\"result\":{\"done",
+            ] {
+                assert!(!text.contains(field), "{field} in {text}");
+            }
+        }
+    }
+
+    #[test]
     fn unknown_messages_are_rejected() {
         assert!(RelayMessage::from_json(r#"{"type": "nope"}"#).is_err());
         assert!(RelayMessage::from_json("not json").is_err());
@@ -691,7 +854,8 @@ mod tests {
                 new_provider_card: "i3/writer".into(),
                 new_provider_name: Some("Writer".into()),
                 by: "Ada".into(),
-                reason: None,
+                envelope: None,
+                request: Some(Box::new(envelope(SealPurpose::Request))),
             },
             PeerMessage::DutyQuery {
                 duty_id: "standup/2026-11-01/09:00".into(),
@@ -699,10 +863,12 @@ mod tests {
             PeerMessage::DutyStatus {
                 duty_id: "standup/2026-11-01/09:00".into(),
                 state: DutyState::Running { since: 7 },
+                envelope: None,
             },
             PeerMessage::DutyStatus {
                 duty_id: "standup/2026-11-01/09:00".into(),
-                state: DutyState::NotRun,
+                state: DutyState::Failed,
+                envelope: Some(envelope(SealPurpose::Note)),
             },
         ];
         for body in bodies {

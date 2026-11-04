@@ -10,7 +10,13 @@
 //! - An [`Envelope`] is content sealed for one recipient. Its
 //!   [`SealedFor`] is in the clear (the relay routes by it) and bound into
 //!   the seal, so moving a blob to another task, person or purpose breaks
-//!   it.
+//!   it. What each envelope holds is in [`crate::content`].
+//! - An envelope is at most [`MAX_ENVELOPE_BYTES`]. Files travel as links.
+//!   A relay refuses a bigger one with the `Error` code
+//!   [`ENVELOPE_TOO_LARGE`], and a receiver drops it.
+//! - `PublicKeysQuery` asks the relay for the keys it pinned for some
+//!   instances (`PublicKeysResult`). A client pins them itself on first
+//!   sight, and refuses other keys later.
 //!
 //! Offline: keys and envelopes are data; nothing here talks to the relay.
 
@@ -22,6 +28,14 @@ pub const SEAL_SUITE: &str = "nandi-seal-v1";
 /// The `Error` code (and HTTP refusal) for an instance that shows up with
 /// other keys than the ones the relay pinned for it
 pub const KEY_MISMATCH: &str = "key_mismatch";
+
+/// The `Error` code of a frame carrying an envelope over
+/// [`MAX_ENVELOPE_BYTES`]
+pub const ENVELOPE_TOO_LARGE: &str = "envelope_too_large";
+
+/// The most an envelope's encoded `enc` and `ciphertext` may hold together
+/// (1 MiB of base64url, about 768 KiB of content). Files go as links.
+pub const MAX_ENVELOPE_BYTES: usize = 1 << 20;
 
 /// Length of a 32-byte key in unpadded base64url
 const KEY_CHARS: usize = 43;
@@ -87,8 +101,8 @@ impl SealPurpose {
 #[serde(rename_all = "camelCase")]
 pub struct SealedFor {
     pub task_id: String,
-    /// The envelope's place in its task, from 0; the receiver drops a
-    /// `(task_id, seq)` it has already opened
+    /// Unique among the sender's envelopes for this task, and increasing.
+    /// The receiver drops a `(task_id, from, seq)` it has already opened.
     pub seq: u64,
     /// The sender's instance ID
     pub from: String,
@@ -116,6 +130,28 @@ pub struct Envelope {
     pub enc: String,
     /// The sealed, signed content and its tag
     pub ciphertext: String,
+}
+
+impl Envelope {
+    /// Its encoded size, as [`MAX_ENVELOPE_BYTES`] counts it
+    pub fn size(&self) -> usize {
+        self.enc.len() + self.ciphertext.len()
+    }
+
+    /// Whether it's within [`MAX_ENVELOPE_BYTES`]
+    pub fn is_within_limit(&self) -> bool {
+        self.size() <= MAX_ENVELOPE_BYTES
+    }
+}
+
+/// The keys a relay pinned for one instance (`PublicKeysResult`); `None`:
+/// it has none for that ID
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceKeys {
+    pub instance_id: String,
+    #[serde(default)]
+    pub public_keys: Option<PublicKeys>,
 }
 
 #[cfg(test)]
@@ -178,6 +214,29 @@ mod tests {
             serde_json::to_value(keys()).unwrap(),
             json!({"signing": keys().signing, "sealing": keys().sealing})
         );
+    }
+
+    #[test]
+    fn envelopes_over_the_limit_are_flagged() {
+        let mut envelope = Envelope {
+            suite: SEAL_SUITE.into(),
+            sealed_for: SealedFor {
+                task_id: "t1".into(),
+                seq: 0,
+                from: "i1".into(),
+                to: "i2".into(),
+                purpose: SealPurpose::Note,
+                capability: String::new(),
+            },
+            sender_key_id: "aa".into(),
+            recipient_key_id: "bb".into(),
+            enc: "e".repeat(43),
+            ciphertext: "c".repeat(MAX_ENVELOPE_BYTES - 43),
+        };
+        assert_eq!(envelope.size(), MAX_ENVELOPE_BYTES);
+        assert!(envelope.is_within_limit());
+        envelope.ciphertext.push('c');
+        assert!(!envelope.is_within_limit());
     }
 
     #[test]

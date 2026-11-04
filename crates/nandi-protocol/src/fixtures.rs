@@ -3,8 +3,8 @@
 use serde_json::json;
 
 use crate::{
-    AgentCard, Availability, DelegationDirection, GatewayCard, OwnerRef, ServesCapability, Task,
-    TaskResult, TaskStatus,
+    AgentCard, Availability, Envelope, GatewayCard, OwnerRef, ResultReport, SealPurpose, SealedFor,
+    SealedTask, ServesCapability, TaskStatus, SEAL_SUITE,
 };
 
 pub(crate) fn card() -> AgentCard {
@@ -32,36 +32,53 @@ pub(crate) fn card() -> AgentCard {
     }
 }
 
-pub(crate) fn task() -> Task {
-    Task {
+/// An envelope for task `t1` (its bytes aren't a real seal)
+pub(crate) fn envelope(purpose: SealPurpose) -> Envelope {
+    Envelope {
+        suite: SEAL_SUITE.into(),
+        sealed_for: SealedFor {
+            task_id: "t1".into(),
+            seq: 3,
+            from: "i1".into(),
+            to: "i2".into(),
+            purpose,
+            capability: "write".into(),
+        },
+        sender_key_id: "a".repeat(32),
+        recipient_key_id: "b".repeat(32),
+        enc: "e".repeat(43),
+        ciphertext: "c".repeat(64),
+    }
+}
+
+pub(crate) fn sealed_task() -> SealedTask {
+    SealedTask {
         id: "t1".into(),
         requester: card(),
         target: "i2/writer".into(),
         capability: "write".into(),
-        input: json!({"topic": "rust"}),
         created_at: 5.0,
         deadline: Some(10.0),
+        envelope: envelope(SealPurpose::Request),
+        continues: None,
     }
 }
 
-pub(crate) fn result() -> TaskResult {
-    TaskResult {
+pub(crate) fn report() -> ResultReport {
+    ResultReport {
         task_id: "t1".into(),
         provider_agent: "i2/writer".into(),
-        output: json!({"text": "hi"}),
+        requester_agent: "i1/papers".into(),
+        capability: "write".into(),
         status: TaskStatus::Completed,
         duration_ms: 12,
         tokens_in: 3,
         tokens_out: 4,
-        error: None,
-        direction: DelegationDirection::Inbound,
-        capability: "write".into(),
-        requester_agent: "i1/papers".into(),
         provider_owner: None,
         requester_owner: Some("ada".into()),
-        input: json!({"topic": "rust"}),
         started_at: 5.0,
         ended_at: Some(17.0),
+        envelope: envelope(SealPurpose::Result),
     }
 }
 

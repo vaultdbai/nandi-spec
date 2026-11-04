@@ -82,7 +82,10 @@ The caller passes the author it expects (the keys it pinned for that person), so
 - Base mode doesn't authenticate the sender: the signature inside does. Anyone may seal to a public key, but only the author's signature makes the content theirs.
 - Static recipient keys: a stolen device key opens envelopes still stored for it. Keep retention short.
 - The relay sees `SealedFor` and the key IDs by design (it routes by them).
-- Replays: the receiver drops a `(task_id, seq)` it has already opened.
+- Replays: the receiver drops a `(task_id, from, seq)` it has already opened. `seq` is unique among one sender's envelopes for a task.
+- Size: an envelope is at most `MAX_ENVELOPE_BYTES` (1 MiB, `nandi-protocol`). Files travel as links.
+
+What each envelope holds, per message, is in `nandi-protocol` (`content`, and its README's "Sealing" table).
 
 ## Tests
 

@@ -8,6 +8,7 @@
 //!   themselves
 //! - [`directory`]: the member directory, availability and people search
 //! - [`keys`]: per-instance public keys and sealed envelopes
+//! - [`content`]: what each sealed envelope holds
 //! - [`task`], [`clarification`]: delegated work and its questions
 //! - [`time`]: timestamps on the wire
 //!
@@ -18,6 +19,7 @@
 
 pub mod card;
 pub mod clarification;
+pub mod content;
 pub mod directory;
 pub mod gateway;
 pub mod http;
@@ -29,6 +31,10 @@ pub mod time;
 
 pub use card::{AgentCard, CardTimestamp, OwnerRef, ServesCapability};
 pub use clarification::{ClarificationRequest, ClarificationResponse, Question};
+pub use content::{
+    AnswerContent, ClarificationContent, NoteContent, RequestContent, ResultContent, SealedContent,
+    LIFECYCLE_CAPABILITY,
+};
 pub use directory::{
     Availability, AvailabilityStatus, MatchedAgent, MemberRecord, PeopleMatch, ServedCapability,
     ASK_ME,
@@ -38,13 +44,19 @@ pub use http::{
     split_token, EnrollRequest, EnrollResponse, RelayHealth, RelayInstanceInfo, DEFAULT_RELAY_PORT,
     JOIN_CODE_ENV, PROBE_PAYLOAD, RELAY_PATH, SECRET_ENV,
 };
-pub use keys::{Envelope, PublicKeys, SealPurpose, SealedFor, KEY_MISMATCH, SEAL_SUITE};
+pub use keys::{
+    Envelope, InstanceKeys, PublicKeys, SealPurpose, SealedFor, ENVELOPE_TOO_LARGE, KEY_MISMATCH,
+    MAX_ENVELOPE_BYTES, SEAL_SUITE,
+};
 pub use message::{
-    DutyState, PeerDelivery, PeerMessage, RelayMessage, TaskAssigned, TaskCompleted, TaskFailed,
+    DutyState, PeerMessage, RelayMessage, TaskAssigned, TaskCompleted, TaskFailed,
     ALL_CAPABILITIES, VERSION_MISMATCH,
 };
 pub use presence::{CapabilityPresence, InstancePresence, ProviderKind, ProviderPresence};
-pub use task::{DelegationDirection, ReasonKind, Task, TaskResult, TaskState, TaskStatus};
+pub use task::{
+    DelegationDirection, ReasonKind, ResultReport, SealedTask, Task, TaskResult, TaskState,
+    TaskStatus,
+};
 pub use time::{now_ms, Timestamp};
 
 /// The wire version. A relay refuses a client that speaks another one.
@@ -54,7 +66,10 @@ pub use time::{now_ms, Timestamp};
 ///   (`FindPeople`)
 /// - 3: per-instance public keys at enrollment and registration, pinned
 ///   by the relay (`key_mismatch`) and carried in the directory
-pub const PROTOCOL_VERSION: u32 = 3;
+/// - 4: every person-to-person payload sealed (`envelope` replaces
+///   `input`, `output`, `error`, notes, reasons, questions and answers),
+///   `PublicKeysQuery`, the envelope cap (`envelope_too_large`)
+pub const PROTOCOL_VERSION: u32 = 4;
 
 #[cfg(test)]
 pub(crate) mod fixtures;
