@@ -44,18 +44,24 @@ pub struct SealedTask {
     pub created_at: Timestamp,
     pub deadline: Option<Timestamp>,
     /// The input, sealed for the provider by the requester, or resealed
-    /// by the provider it was reassigned from
+    /// by the provider it was reassigned from (the requester's signature
+    /// kept). Bound to this task's ID either way.
     pub envelope: Envelope,
-    /// The earlier attempt this one carries on, when `envelope` is a
-    /// reseal of that attempt's request (its `sealedFor.taskId`)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub continues: Option<String>,
 }
 
-impl SealedTask {
-    /// The task ID `envelope` must be sealed under
-    pub fn sealed_task_id(&self) -> &str {
-        self.continues.as_deref().unwrap_or(&self.id)
+/// One candidate of a `SubmitTask`: who, and the input sealed for them
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskAttempt {
+    /// The provider's card (`<instance_id>/<agent_id>`)
+    pub target: String,
+    pub envelope: Envelope,
+}
+
+impl TaskAttempt {
+    /// The provider's instance ID
+    pub fn instance(&self) -> &str {
+        self.target.split('/').next().unwrap_or_default()
     }
 }
 

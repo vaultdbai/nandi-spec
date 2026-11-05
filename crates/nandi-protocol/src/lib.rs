@@ -11,6 +11,8 @@
 //! - [`keys`]: per-instance public keys and sealed envelopes
 //! - [`content`]: what each sealed envelope holds
 //! - [`task`], [`clarification`]: delegated work and its questions
+//! - [`mail`]: store-and-forward, each instance's mailbox and task events
+//! - [`duty`]: calendar handovers, watched at the relay
 //! - [`time`]: timestamps on the wire
 //!
 //! Serde shapes are the wire format: a field is never renamed or retyped
@@ -22,9 +24,11 @@ pub mod card;
 pub mod clarification;
 pub mod content;
 pub mod directory;
+pub mod duty;
 pub mod gateway;
 pub mod http;
 pub mod keys;
+pub mod mail;
 pub mod message;
 pub mod presence;
 pub mod routing;
@@ -41,6 +45,7 @@ pub use directory::{
     Availability, AvailabilityStatus, MatchedAgent, MemberRecord, PeopleMatch, ServedCapability,
     ASK_ME,
 };
+pub use duty::{DutyDecision, DutyState, HandoverReason};
 pub use gateway::{GatewayCard, GATEWAY_AGENT_ID, GATEWAY_VERSION};
 pub use http::{
     split_token, EnrollRequest, EnrollResponse, RelayHealth, RelayInstanceInfo, DEFAULT_RELAY_PORT,
@@ -50,18 +55,16 @@ pub use keys::{
     Envelope, InstanceKeys, PublicKeys, SealPurpose, SealedFor, ENVELOPE_TOO_LARGE, KEY_MISMATCH,
     MAX_ENVELOPE_BYTES, SEAL_SUITE,
 };
-pub use message::{
-    DutyState, PeerMessage, RelayMessage, TaskAssigned, TaskCompleted, TaskFailed,
-    ALL_CAPABILITIES, VERSION_MISMATCH,
-};
+pub use mail::{Delivery, FailoverCause, TaskEvent};
+pub use message::{PeerMessage, RelayMessage, ALL_CAPABILITIES, VERSION_MISMATCH};
 pub use presence::{CapabilityPresence, InstancePresence, ProviderKind, ProviderPresence};
 pub use routing::{
     NoRoute, RequestKind, RouteCandidate, RoutePlan, RouteReason, RouteStrategy, RouteTarget,
     RoutingHints, RoutingQuery, DEFAULT_MAX_CANDIDATES, MAX_CANDIDATES,
 };
 pub use task::{
-    DelegationDirection, ReasonKind, ResultReport, SealedTask, Task, TaskResult, TaskState,
-    TaskStatus,
+    DelegationDirection, ReasonKind, ResultReport, SealedTask, Task, TaskAttempt, TaskResult,
+    TaskState, TaskStatus,
 };
 pub use time::{now_ms, Timestamp};
 
@@ -76,7 +79,16 @@ pub use time::{now_ms, Timestamp};
 ///   `input`, `output`, `error`, notes, reasons, questions and answers),
 ///   `PublicKeysQuery`, the envelope cap (`envelope_too_large`)
 /// - 5: routing at the relay (`RouteQuery` → `RoutePlan`, see [`routing`])
-pub const PROTOCOL_VERSION: u32 = 5;
+/// - 6: the team brain at the relay. Store-and-forward (`SubmitTask` with
+///   an envelope per candidate, `Deliver`/`Ack`/`InboxSync`, see [`mail`]),
+///   failover, timeouts and abandons at the relay ([`TaskEvent`]),
+///   reassignment (`Reassign`, `ReassignResult`, [`Delivery::Reseal`]) and
+///   calendar handovers (`DutyWatch`, `DutyReport`, see [`duty`]). Gone:
+///   `DelegateTask`, `TaskAssigned`, `TaskCompleted`, `TaskFailed`,
+///   `Undeliverable`, the relay's `Peer` to a client, `ReassignTask`,
+///   `TaskTimedOut`, `DutyQuery`/`DutyStatus`, `StatusResponse`'s result
+///   and `SealedTask.continues`.
+pub const PROTOCOL_VERSION: u32 = 6;
 
 #[cfg(test)]
 pub(crate) mod fixtures;

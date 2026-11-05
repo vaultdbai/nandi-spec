@@ -18,10 +18,18 @@
 //! holds is in [`crate::content`]. A relay refuses a frame whose envelope
 //! is over [`crate::MAX_ENVELOPE_BYTES`] ([`crate::ENVELOPE_TOO_LARGE`]).
 //!
+//! Tasks are stored and forwarded (see [`crate::mail`]): `SubmitTask`
+//! carries the request sealed for each candidate; the relay delivers it
+//! (now, or when the provider is back), fails it over, ends it at its due
+//! date, and keeps everything for a party in its mailbox (`Deliver`) until
+//! it's acked (`Ack`). Reassignment (`Reassign`) and calendar handovers
+//! (`DutyWatch`, `DutyReport`, see [`crate::duty`]) are decided at the
+//! relay too.
+//!
 //! Offline: every request here has a reply or a timeout on the client; a
 //! client that isn't connected reports "not connected" and keeps working
-//! (cards it last saw, its own agents locally). `Peer` messages to an
-//! offline instance come back as `Undeliverable`.
+//! (cards it last saw, its own agents locally). What it sent before waits
+//! at the relay.
 
 use std::collections::HashMap;
 
@@ -29,11 +37,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::card::AgentCard;
 use crate::directory::{MemberRecord, PeopleMatch};
+use crate::duty::DutyState;
 use crate::gateway::GatewayCard;
 use crate::keys::{Envelope, InstanceKeys, PublicKeys};
+use crate::mail::Delivery;
 use crate::presence::{CapabilityPresence, InstancePresence};
-use crate::routing::{RoutePlan, RoutingQuery};
-use crate::task::{ReasonKind, ResultReport, SealedTask, TaskState};
+use crate::routing::{RequestKind, RoutePlan, RoutingQuery};
+use crate::task::{ReasonKind, ResultReport, TaskAttempt, TaskState};
 use crate::time::Timestamp;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -73,7 +83,8 @@ pub enum RelayMessage {
     Deregister {
         instance_id: String,
     },
-    /// The output and error sealed for the requester
+    /// The output and error sealed for the requester; kept for it until
+    /// it acks the delivery
     TaskResult {
         task_id: String,
         result: ResultReport,
@@ -85,19 +96,20 @@ pub enum RelayMessage {
         capability: String,
         requester_instance: String,
     },
-    DelegateTask {
+    /// A request for another instance, sealed for each candidate in turn
+    /// (best first, at most [`crate::MAX_CANDIDATES`]). The relay answers
+    /// with a [`crate::TaskEvent`] (`accepted` or `refused`) in the
+    /// requester's mailbox, delivers the first attempt (now, or when its
+    /// provider is back) and fails over to the next. An assignment gets
+    /// one attempt: it's meant for that person.
+    SubmitTask {
         task_id: String,
-        /// Target card ID (`<instance_id>/<agent_id>`)
-        target_agent: String,
+        kind: RequestKind,
         capability: String,
         requester_card: AgentCard,
         deadline: Option<Timestamp>,
         signature: String,
-        /// The input, sealed for the target's instance
-        envelope: Envelope,
-        /// See [`SealedTask::continues`]
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        continues: Option<String>,
+        attempts: Vec<TaskAttempt>,
     },
 
     // Relay → both
@@ -109,14 +121,23 @@ pub enum RelayMessage {
         capability: String,
         agents: Vec<AgentCard>,
     },
-    /// To the requester: the task was routed. To the provider: run it.
-    TaskAssigned(TaskAssigned),
-    TaskCompleted(TaskCompleted),
-    TaskFailed(TaskFailed),
     Error {
         code: String,
         message: String,
     },
+
+    // Store-and-forward (see `mail`)
+    /// Relay → instance: one item from its mailbox
+    Deliver {
+        mail_id: u64,
+        item: Delivery,
+    },
+    /// Instance → relay: it has these; the relay stops sending them
+    Ack {
+        mail_ids: Vec<u64>,
+    },
+    /// Instance → relay, once registered: send everything not acked yet
+    InboxSync {},
 
     // Keys (see `keys`)
     /// Instance → relay: the keys pinned for these instances
@@ -165,21 +186,64 @@ pub enum RelayMessage {
         total: u32,
     },
 
-    // Wave final: the task lifecycle between two instances. The relay
-    // forwards `Peer` to `target_instance` as is, filling in
-    // `from_instance` (whatever the sender put there is overwritten), and
-    // answers `Undeliverable` when the target isn't connected. Stateless,
-    // so it survives relay restarts.
+    /// Instance → relay: a lifecycle message for the other side of a task.
+    /// The relay checks the sender is a party to it, keeps it in the
+    /// other's mailbox (live-only kinds go now or not at all, see
+    /// [`PeerMessage::is_live_only`]) and delivers it as
+    /// [`Delivery::Peer`].
     Peer {
-        #[serde(default)]
-        from_instance: String,
         target_instance: String,
         body: PeerMessage,
     },
-    /// Relay → sender: `target_instance` is offline
-    Undeliverable {
-        target_instance: String,
-        body: PeerMessage,
+
+    // Reassignment
+    /// Instance → relay: hand `task_id` to `target`. From its provider
+    /// (its own move, or a manager's [`Delivery::Reseal`]), or from its
+    /// requester answering a `Reseal`. `request` is the request sealed
+    /// for the new provider (the requester's signature kept); a provider
+    /// without it leaves it out, and the relay asks the requester to
+    /// seal it. The relay checks the attempt chain, so nobody gets the
+    /// task twice.
+    Reassign {
+        task_id: String,
+        /// The new provider's card
+        target: String,
+        /// Who moved it (a display name)
+        by: String,
+        /// The reason, sealed for the requester
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        envelope: Option<Envelope>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request: Option<Box<Envelope>>,
+    },
+    /// Relay → the instance that sent `Reassign`: done (`error` empty), or
+    /// why not
+    ReassignResult {
+        task_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+
+    // Calendar handovers (see `duty`)
+    /// Backup → relay: watch this duty of `primary_instance`; a watch sent
+    /// again replaces the earlier one
+    DutyWatch {
+        duty_id: String,
+        primary_instance: String,
+        /// When it's due (epoch ms)
+        due_at: i64,
+        /// Hand over when the primary's run takes longer than this
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after_minutes: Option<u32>,
+    },
+    /// Primary → relay: how it's doing with a duty it was asked about. A
+    /// failure's error is sealed for the backup (a note bound to the duty
+    /// ID).
+    DutyReport {
+        duty_id: String,
+        state: DutyState,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        envelope: Option<Envelope>,
     },
 
     // Routing (see `routing`)
@@ -216,9 +280,9 @@ pub enum RelayMessage {
 }
 
 /// Task lifecycle and clarification traffic between requester and
-/// provider (wave final, Tracks B and C), tagged by `kind`. Free text,
-/// questions, answers and results go in an `envelope` sealed for the
-/// target (see [`crate::content`]); the rest is metadata.
+/// provider, tagged by `kind`. Free text, questions, answers and results
+/// go in an `envelope` sealed for the target (see [`crate::content`]); the
+/// rest is metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -235,7 +299,9 @@ pub enum PeerMessage {
         envelope: Option<Envelope>,
     },
     /// Provider → requester: refused (policy, trust, capacity), with the
-    /// reason sealed
+    /// reason sealed. The relay gives the task to the next candidate
+    /// instead of passing this on, while there is one (never for a
+    /// declined assignment).
     RejectTask {
         task_id: String,
         /// Why, as the requester's UI matches it to a fix; `None` when
@@ -260,19 +326,14 @@ pub enum PeerMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         envelope: Option<Envelope>,
     },
-    /// Requester → provider
+    /// Requester → provider (live only)
     StatusQuery { task_id: String },
-    /// Provider → requester
+    /// Provider → requester (live only)
     StatusResponse {
         task_id: String,
         state: TaskState,
         eta_seconds: Option<u32>,
         elapsed_seconds: u32,
-        /// Once it ended: its output and error, so a requester that was
-        /// offline when the result was sent still gets it (a lasting
-        /// assignment)
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        envelope: Option<Envelope>,
     },
     /// Either side, with the reason sealed
     CancelTask {
@@ -282,12 +343,6 @@ pub enum PeerMessage {
     },
     /// Provider → requester: the task reached the provider
     TaskDelivered { task_id: String },
-    /// Requester → provider: gave up waiting, with the reason sealed
-    TaskTimedOut {
-        task_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        envelope: Option<Envelope>,
-    },
     /// Provider → requester: questions, sealed
     ClarificationRequest {
         task_id: String,
@@ -303,66 +358,10 @@ pub enum PeerMessage {
     },
     /// Requester → provider: nobody answered in time
     ClarificationTimeout { task_id: String },
-    /// Provider → requester (wave EF): send this task to
-    /// `new_provider_card` instead; the provider already let it go
-    ReassignTask {
-        task_id: String,
-        new_provider_instance: String,
-        new_provider_card: String,
-        /// The new provider's display name, for the requester's thread
-        #[serde(default)]
-        new_provider_name: Option<String>,
-        /// Who reassigned it (display name)
-        by: String,
-        /// The reason, sealed for the requester
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        envelope: Option<Envelope>,
-        /// The task's request, resealed by the provider for the new
-        /// provider (the requester's signature kept). The requester sends
-        /// it on as the next attempt's envelope, with `continues` set to
-        /// this task.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        request: Option<Box<Envelope>>,
-    },
-    /// A calendar trigger's backup → its primary: how is this duty going?
-    /// (`duty_id` is `<trigger>/<date>/<time>`, see `domain::calendar`)
-    DutyQuery { duty_id: String },
-    /// Primary → backup; a failure's error is sealed (a note bound to the
-    /// duty ID)
-    DutyStatus {
-        duty_id: String,
-        state: DutyState,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        envelope: Option<Envelope>,
-    },
-}
-
-/// How a calendar trigger's primary is doing with one scheduled fire, as
-/// its own Nandi reports it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "state",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
-pub enum DutyState {
-    /// Not due yet on the primary's clock (epoch ms)
-    Upcoming {
-        due_at: i64,
-    },
-    /// Dispatched; its run hasn't finished (epoch ms)
-    Running {
-        since: i64,
-    },
-    Completed,
-    /// Its error, if any, is in the `DutyStatus` envelope
-    Failed,
-    /// Due, but no run was started (trigger off, rate limited, or missing)
-    NotRun,
 }
 
 impl PeerMessage {
-    /// The task the message is about (a duty's ID for duty messages)
+    /// The task the message is about
     pub fn task_id(&self) -> &str {
         match self {
             Self::AcknowledgeTask { task_id, .. }
@@ -372,13 +371,9 @@ impl PeerMessage {
             | Self::StatusResponse { task_id, .. }
             | Self::CancelTask { task_id, .. }
             | Self::TaskDelivered { task_id }
-            | Self::TaskTimedOut { task_id, .. }
             | Self::ClarificationTimeout { task_id }
             | Self::ClarificationRequest { task_id, .. }
-            | Self::ClarificationResponse { task_id, .. }
-            | Self::ReassignTask { task_id, .. } => task_id,
-            // Not a task; its ID never matches one
-            Self::DutyQuery { duty_id } | Self::DutyStatus { duty_id, .. } => duty_id,
+            | Self::ClarificationResponse { task_id, .. } => task_id,
         }
     }
 
@@ -388,45 +383,30 @@ impl PeerMessage {
             Self::AcknowledgeTask { envelope, .. }
             | Self::RejectTask { envelope, .. }
             | Self::ProgressUpdate { envelope, .. }
-            | Self::StatusResponse { envelope, .. }
-            | Self::CancelTask { envelope, .. }
-            | Self::TaskTimedOut { envelope, .. }
-            | Self::DutyStatus { envelope, .. } => envelope.iter().collect(),
+            | Self::CancelTask { envelope, .. } => envelope.iter().collect(),
             Self::ClarificationRequest { envelope, .. }
             | Self::ClarificationResponse { envelope, .. } => vec![envelope],
-            Self::ReassignTask {
-                envelope, request, ..
-            } => envelope.iter().chain(request.as_deref()).collect(),
             Self::StatusQuery { .. }
+            | Self::StatusResponse { .. }
             | Self::TaskDelivered { .. }
-            | Self::ClarificationTimeout { .. }
-            | Self::DutyQuery { .. } => Vec::new(),
+            | Self::ClarificationTimeout { .. } => Vec::new(),
         }
     }
-}
 
-/// A task reached a provider. The provider's Nandi opens and runs it; the
-/// requester's (with no task) only learns where it went.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TaskAssigned {
-    pub task_id: String,
-    pub provider_instance: String,
-    pub task: Option<SealedTask>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TaskCompleted {
-    pub task_id: String,
-    pub result: ResultReport,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TaskFailed {
-    pub task_id: String,
-    pub error: String,
+    /// Whether it matters only to someone online right now: a status
+    /// query and its answer, and progress that is neither a hold nor a
+    /// place in line ("still working"). The relay doesn't store these.
+    pub fn is_live_only(&self) -> bool {
+        match self {
+            Self::StatusQuery { .. } | Self::StatusResponse { .. } => true,
+            Self::ProgressUpdate {
+                reason_kind,
+                queue_position,
+                ..
+            } => reason_kind.is_none() && queue_position.is_none(),
+            _ => false,
+        }
+    }
 }
 
 /// The `QueryCapability` capability that matches every registered card
@@ -439,15 +419,14 @@ impl RelayMessage {
     /// Every envelope it carries (to check [`crate::MAX_ENVELOPE_BYTES`])
     pub fn envelopes(&self) -> Vec<&Envelope> {
         match self {
-            Self::DelegateTask { envelope, .. } => vec![envelope],
+            Self::SubmitTask { attempts, .. } => attempts.iter().map(|a| &a.envelope).collect(),
             Self::TaskResult { result, .. } => vec![&result.envelope],
-            Self::TaskAssigned(assigned) => assigned
-                .task
-                .as_ref()
-                .map(|task| vec![&task.envelope])
-                .unwrap_or_default(),
-            Self::TaskCompleted(completed) => vec![&completed.result.envelope],
-            Self::Peer { body, .. } | Self::Undeliverable { body, .. } => body.envelopes(),
+            Self::Deliver { item, .. } => item.envelopes(),
+            Self::Peer { body, .. } => body.envelopes(),
+            Self::Reassign {
+                envelope, request, ..
+            } => envelope.iter().chain(request.as_deref()).collect(),
+            Self::DutyReport { envelope, .. } => envelope.iter().collect(),
             _ => Vec::new(),
         }
     }
@@ -473,8 +452,10 @@ mod tests {
 
     use super::*;
     use crate::directory::{Availability, MatchedAgent, ServedCapability};
-    use crate::fixtures::{card, envelope, gateway_card, report, sealed_task};
+    use crate::duty::DutyState;
+    use crate::fixtures::{card, envelope, gateway_card, report};
     use crate::keys::{SealPurpose, MAX_ENVELOPE_BYTES};
+    use crate::mail::tests::every_delivery;
     use crate::routing::{
         NoRoute, RequestKind, RouteCandidate, RouteReason, RouteStrategy, RouteTarget, RoutingHints,
     };
@@ -510,25 +491,23 @@ mod tests {
                 capability: "find-papers".into(),
                 requester_instance: "i2".into(),
             },
-            RelayMessage::DelegateTask {
+            RelayMessage::SubmitTask {
                 task_id: "t1".into(),
-                target_agent: "i2/writer".into(),
-                capability: "write".into(),
-                requester_card: card(),
-                deadline: None,
-                signature: "sig".into(),
-                envelope: envelope(SealPurpose::Request),
-                continues: None,
-            },
-            RelayMessage::DelegateTask {
-                task_id: "t2".into(),
-                target_agent: "i3/writer".into(),
+                kind: RequestKind::Delegate,
                 capability: "write".into(),
                 requester_card: card(),
                 deadline: Some(9.0),
                 signature: "sig".into(),
-                envelope: envelope(SealPurpose::Request),
-                continues: Some("t1".into()),
+                attempts: vec![
+                    TaskAttempt {
+                        target: "i2/writer".into(),
+                        envelope: envelope(SealPurpose::Request),
+                    },
+                    TaskAttempt {
+                        target: "i3/writer".into(),
+                        envelope: envelope(SealPurpose::Request),
+                    },
+                ],
             },
             RelayMessage::PublicKeysQuery {
                 instance_ids: vec!["i2".into()],
@@ -555,28 +534,14 @@ mod tests {
                 capability: "find-papers".into(),
                 agents: vec![card()],
             },
-            RelayMessage::TaskAssigned(TaskAssigned {
-                task_id: "t1".into(),
-                provider_instance: "i2".into(),
-                task: Some(sealed_task()),
-            }),
-            RelayMessage::TaskAssigned(TaskAssigned {
-                task_id: "t1".into(),
-                provider_instance: "i2".into(),
-                task: None,
-            }),
-            RelayMessage::TaskCompleted(TaskCompleted {
-                task_id: "t1".into(),
-                result: report(),
-            }),
-            RelayMessage::TaskFailed(TaskFailed {
-                task_id: "t1".into(),
-                error: "boom".into(),
-            }),
             RelayMessage::Error {
                 code: "unauthorized".into(),
                 message: "bad token".into(),
             },
+            RelayMessage::Ack {
+                mail_ids: vec![1, 2],
+            },
+            RelayMessage::InboxSync {},
             RelayMessage::RegisterGateway {
                 instance_id: "i1".into(),
                 card: gateway_card(),
@@ -626,11 +591,39 @@ mod tests {
                 unstated: 1,
                 total: 1,
             },
-            RelayMessage::Undeliverable {
-                target_instance: "i2".into(),
-                body: PeerMessage::StatusQuery {
-                    task_id: "t1".into(),
-                },
+            RelayMessage::Reassign {
+                task_id: "t1".into(),
+                target: "i3/writer".into(),
+                by: "Ada".into(),
+                envelope: Some(envelope(SealPurpose::Note)),
+                request: Some(Box::new(envelope(SealPurpose::Request))),
+            },
+            RelayMessage::Reassign {
+                task_id: "t1".into(),
+                target: "i3/writer".into(),
+                by: "Ada".into(),
+                envelope: None,
+                request: None,
+            },
+            RelayMessage::ReassignResult {
+                task_id: "t1".into(),
+                error: Some("Carol already had it".into()),
+            },
+            RelayMessage::DutyWatch {
+                duty_id: "standup/2026-11-05/09:00".into(),
+                primary_instance: "i2".into(),
+                due_at: 7,
+                after_minutes: Some(30),
+            },
+            RelayMessage::DutyReport {
+                duty_id: "standup/2026-11-05/09:00".into(),
+                state: DutyState::Failed,
+                envelope: Some(envelope(SealPurpose::Note)),
+            },
+            RelayMessage::DutyReport {
+                duty_id: "standup/2026-11-05/09:00".into(),
+                state: DutyState::Running { since: 7 },
+                envelope: None,
             },
             RelayMessage::RouteQuery {
                 query_id: "q1".into(),
@@ -699,9 +692,17 @@ mod tests {
             every_peer_message()
                 .into_iter()
                 .map(|body| RelayMessage::Peer {
-                    from_instance: "i1".into(),
                     target_instance: "i2".into(),
                     body,
+                }),
+        )
+        .chain(
+            every_delivery()
+                .into_iter()
+                .enumerate()
+                .map(|(n, item)| RelayMessage::Deliver {
+                    mail_id: n as u64 + 1,
+                    item,
                 }),
         )
         .collect()
@@ -741,14 +742,6 @@ mod tests {
                 state: TaskState::Working,
                 eta_seconds: Some(10),
                 elapsed_seconds: 20,
-                envelope: None,
-            },
-            PeerMessage::StatusResponse {
-                task_id: "t1".into(),
-                state: TaskState::Completed,
-                eta_seconds: None,
-                elapsed_seconds: 90,
-                envelope: Some(envelope(SealPurpose::Result)),
             },
             PeerMessage::CancelTask {
                 task_id: "t1".into(),
@@ -756,10 +749,6 @@ mod tests {
             },
             PeerMessage::TaskDelivered {
                 task_id: "t1".into(),
-            },
-            PeerMessage::TaskTimedOut {
-                task_id: "t1".into(),
-                envelope: Some(envelope(SealPurpose::Note)),
             },
             PeerMessage::ClarificationRequest {
                 task_id: "t1".into(),
@@ -783,7 +772,6 @@ mod tests {
             assert_eq!(body.task_id(), "t1");
         }
         let value = serde_json::to_value(RelayMessage::Peer {
-            from_instance: String::new(),
             target_instance: "i2".into(),
             body: PeerMessage::StatusQuery {
                 task_id: "t1".into(),
@@ -792,8 +780,20 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            json!({"type": "peer", "fromInstance": "", "targetInstance": "i2",
+            json!({"type": "peer", "targetInstance": "i2",
                    "body": {"kind": "status_query", "taskId": "t1"}})
+        );
+    }
+
+    #[test]
+    fn only_queries_and_plain_progress_are_live_only() {
+        let live: Vec<bool> = every_peer_message()
+            .iter()
+            .map(PeerMessage::is_live_only)
+            .collect();
+        assert_eq!(
+            live,
+            vec![false, false, true, false, true, true, false, false, false, false, false]
         );
     }
 
@@ -842,14 +842,27 @@ mod tests {
             .unwrap(),
             json!({"type": "find_people", "topic": "x", "limit": 3})
         );
-        let value = serde_json::to_value(RelayMessage::TaskFailed(TaskFailed {
-            task_id: "t1".into(),
-            error: "e".into(),
-        }))
+        assert_eq!(
+            serde_json::to_value(RelayMessage::InboxSync {}).unwrap(),
+            json!({"type": "inbox_sync"})
+        );
+        assert_eq!(
+            serde_json::to_value(RelayMessage::Ack { mail_ids: vec![4] }).unwrap(),
+            json!({"type": "ack", "mailIds": [4]})
+        );
+        let value = serde_json::to_value(RelayMessage::Deliver {
+            mail_id: 9,
+            item: crate::Delivery::Reseal {
+                task_id: "t1".into(),
+                target: "i3/gateway".into(),
+                by: "Ada".into(),
+            },
+        })
         .unwrap();
         assert_eq!(
             value,
-            json!({"type": "task_failed", "taskId": "t1", "error": "e"})
+            json!({"type": "deliver", "mailId": 9,
+                   "item": {"item": "reseal", "taskId": "t1", "target": "i3/gateway", "by": "Ada"}})
         );
         let value = serde_json::to_value(RelayMessage::QueryCapability {
             capability: "x".into(),
@@ -868,38 +881,44 @@ mod tests {
             .iter()
             .map(|message| message.envelopes().len())
             .collect();
-        assert_eq!(counts.iter().sum::<usize>(), 11, "{counts:?}");
+        // SubmitTask 2, TaskResult 1, Reassign 2, DutyReport 1, peers 4,
+        // deliveries 5
+        assert_eq!(counts.iter().sum::<usize>(), 15, "{counts:?}");
         for message in every_message() {
             assert!(message.envelopes_within_limit());
         }
         let mut big = envelope(SealPurpose::Request);
         big.ciphertext = "c".repeat(MAX_ENVELOPE_BYTES);
-        let message = RelayMessage::Peer {
-            from_instance: "i1".into(),
-            target_instance: "i2".into(),
-            body: PeerMessage::ReassignTask {
-                task_id: "t1".into(),
-                new_provider_instance: "i3".into(),
-                new_provider_card: "i3/writer".into(),
-                new_provider_name: None,
-                by: "Ada".into(),
-                envelope: Some(envelope(SealPurpose::Note)),
-                request: Some(Box::new(big)),
-            },
+        let message = RelayMessage::Reassign {
+            task_id: "t1".into(),
+            target: "i3/writer".into(),
+            by: "Ada".into(),
+            envelope: Some(envelope(SealPurpose::Note)),
+            request: Some(Box::new(big.clone())),
         };
         assert_eq!(message.envelopes().len(), 2);
         assert!(!message.envelopes_within_limit());
+        let submit = RelayMessage::SubmitTask {
+            task_id: "t1".into(),
+            kind: RequestKind::Delegate,
+            capability: "write".into(),
+            requester_card: card(),
+            deadline: None,
+            signature: "sig".into(),
+            attempts: vec![TaskAttempt {
+                target: "i2/writer".into(),
+                envelope: big,
+            }],
+        };
+        assert!(!submit.envelopes_within_limit());
     }
 
     #[test]
     fn no_content_field_crosses_in_the_clear() {
-        // The content fields of protocol 3 are gone. (`TaskFailed` and
-        // `Error` carry the relay's own words, not a person's.)
+        // The content fields of protocol 3 are gone. (`Error` and a refused
+        // task's message carry the relay's own words, not a person's.)
         for message in every_message() {
-            if matches!(
-                message,
-                RelayMessage::TaskFailed(_) | RelayMessage::Error { .. }
-            ) {
+            if matches!(message, RelayMessage::Error { .. }) {
                 continue;
             }
             let text = message.to_json().unwrap();
@@ -907,12 +926,16 @@ mod tests {
                 "\"input\":",
                 "\"output\":",
                 "\"note\":",
-                "\"reason\":",
+                "\"reason\":\"",
                 "\"questions\":",
                 "\"answers\":",
                 "\"error\":\"",
                 "\"result\":{\"done",
             ] {
+                if field == "\"error\":\"" && matches!(message, RelayMessage::ReassignResult { .. })
+                {
+                    continue;
+                }
                 assert!(!text.contains(field), "{field} in {text}");
             }
         }
@@ -922,46 +945,14 @@ mod tests {
     fn unknown_messages_are_rejected() {
         assert!(RelayMessage::from_json(r#"{"type": "nope"}"#).is_err());
         assert!(RelayMessage::from_json("not json").is_err());
-    }
-
-    #[test]
-    fn reassign_and_duty_messages_round_trip() {
-        let bodies = [
-            PeerMessage::ReassignTask {
-                task_id: "t1".into(),
-                new_provider_instance: "i3".into(),
-                new_provider_card: "i3/writer".into(),
-                new_provider_name: Some("Writer".into()),
-                by: "Ada".into(),
-                envelope: None,
-                request: Some(Box::new(envelope(SealPurpose::Request))),
-            },
-            PeerMessage::DutyQuery {
-                duty_id: "standup/2026-11-01/09:00".into(),
-            },
-            PeerMessage::DutyStatus {
-                duty_id: "standup/2026-11-01/09:00".into(),
-                state: DutyState::Running { since: 7 },
-                envelope: None,
-            },
-            PeerMessage::DutyStatus {
-                duty_id: "standup/2026-11-01/09:00".into(),
-                state: DutyState::Failed,
-                envelope: Some(envelope(SealPurpose::Note)),
-            },
-        ];
-        for body in bodies {
-            let message = RelayMessage::Peer {
-                from_instance: "i1".into(),
-                target_instance: "i2".into(),
-                body,
-            };
-            let text = message.to_json().unwrap();
-            assert_eq!(RelayMessage::from_json(&text).unwrap(), message, "{text}");
+        // Gone in protocol 6
+        for gone in [
+            "delegate_task",
+            "task_assigned",
+            "task_completed",
+            "undeliverable",
+        ] {
+            assert!(RelayMessage::from_json(&format!(r#"{{"type": "{gone}"}}"#)).is_err());
         }
-        assert_eq!(
-            serde_json::to_value(DutyState::Upcoming { due_at: 5 }).unwrap(),
-            json!({"state": "upcoming", "dueAt": 5})
-        );
     }
 }

@@ -4,17 +4,16 @@
 //!
 //! | Wire field | Purpose | Content | Capability bound |
 //! | --- | --- | --- | --- |
-//! | `DelegateTask.envelope`, `ReassignTask.request` | `request` | [`RequestContent`] | The task's |
+//! | `SubmitTask.attempts[].envelope`, `Reassign.request` | `request` | [`RequestContent`] | The task's |
 //! | `ResultReport.envelope` | `result` | [`ResultContent`] | The task's |
-//! | `StatusResponse.envelope` | `result` | [`ResultContent`] | [`LIFECYCLE_CAPABILITY`] |
 //! | `ClarificationRequest.envelope` | `clarification` | [`ClarificationContent`] | [`LIFECYCLE_CAPABILITY`] |
 //! | `ClarificationResponse.envelope` | `answer` | [`AnswerContent`] | [`LIFECYCLE_CAPABILITY`] |
-//! | Every other `envelope` (a note, a reason, an error) | `note` | [`NoteContent`] | [`LIFECYCLE_CAPABILITY`] |
+//! | Every other `envelope` (a note, a reason, an error; `Reassign`, `TaskEvent::Reassigned`, `DutyReport`, `Delivery::Duty`) | `note` | [`NoteContent`] | [`LIFECYCLE_CAPABILITY`] |
 //!
 //! A request and its result bind the task's capability, which both sides
 //! read in the clear. Lifecycle messages don't carry the capability, so
-//! their envelopes bind [`LIFECYCLE_CAPABILITY`]; the task ID binds them to
-//! their task. A receiver checks the purpose, the task, the recipient and
+//! their envelopes bind [`LIFECYCLE_CAPABILITY`]; the task ID (a duty's
+//! ID for duty notes) binds them to their task. A receiver checks the purpose, the task, the recipient and
 //! the sender of every envelope before it opens one.
 
 use std::collections::HashMap;

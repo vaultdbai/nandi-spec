@@ -60,7 +60,6 @@ pub(crate) fn sealed_task() -> SealedTask {
         created_at: 5.0,
         deadline: Some(10.0),
         envelope: envelope(SealPurpose::Request),
-        continues: None,
     }
 }
 
