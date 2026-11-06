@@ -1,0 +1,366 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vaultdbai/nandi-registry/registry-schema/connector.schema.json",
+  "title": "Nandi registry connector",
+  "description": "One connector in a Nandi registry (connectors/<id>.json): an MCP server published as one connector.md file in a public repo. Derived from that file plus the release (repo, path, ref, commit, signature). Authoritative for the in-app Library and the static website.",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "description",
+    "publisher",
+    "repo",
+    "path",
+    "latest_version",
+    "min_nandi_version",
+    "tags",
+    "kind",
+    "run",
+    "placement",
+    "auth",
+    "tools",
+    "data",
+    "hosts"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
+      "description": "Unique within the registry; the connector's ID once installed (tool names are prefixed <id>__)"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "publisher": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
+      "description": "GitHub handle of the publisher (see publisher.schema.json)"
+    },
+    "repo": {
+      "type": "string",
+      "description": "The repo holding connector.md, e.g. github.com/user/nandi-connectors"
+    },
+    "path": {
+      "type": "string",
+      "description": "The folder holding connector.md within repo, e.g. connectors/fetch. Relative, no '..'"
+    },
+    "latest_version": {
+      "$ref": "agent.schema.json#/$defs/semver"
+    },
+    "ref": {
+      "type": "string",
+      "description": "The git ref of the release, default v<latest_version>; a repo with several connectors tags <id>-v<version>"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "The release's full commit SHA, which signature names"
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^ed25519:[A-Za-z0-9+/=]+$",
+      "description": "The publisher's signature of 'nandi-signature-v1\\nconnector\\n<id>\\n<version>\\n<commit>\\n'"
+    },
+    "min_nandi_version": {
+      "$ref": "agent.schema.json#/$defs/semver"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "kind": {
+      "enum": ["mcp-stdio", "mcp-http", "builtin"],
+      "description": "mcp-stdio: an MCP server started from a pinned package; mcp-http: a Streamable HTTP MCP server at a URL; builtin: shipped inside Nandi (listed for discovery only)"
+    },
+    "run": {
+      "$ref": "#/$defs/run"
+    },
+    "image": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Only when the server needs something unusual (a browser, system libraries): its own container image. Without it, stdio servers run in ghcr.io/vaultdbai/nandi-connectors"
+    },
+    "placement": {
+      "enum": ["container", "host"],
+      "description": "Where a stdio server runs. The public registry accepts container only; host connectors are added by hand or from a company registry"
+    },
+    "auth": {
+      "$ref": "#/$defs/auth"
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/tool"
+      },
+      "description": "Every tool the server offers. A tool the server offers that isn't listed counts as write"
+    },
+    "data": {
+      "type": "object",
+      "required": ["read", "write"],
+      "additionalProperties": false,
+      "description": "What it can read and write, in plain words, for the install dialog",
+      "properties": {
+        "read": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "write": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "hosts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/host"
+      },
+      "description": "Every network host it reaches. A stdio server's container reaches only these, through the egress proxy"
+    },
+    "icon_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "readme_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "install_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Reserved"
+    },
+    "rating": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 5,
+      "description": "Reserved"
+    },
+    "verified": {
+      "type": "boolean",
+      "description": "Reserved"
+    },
+    "deprecated": {
+      "type": "boolean",
+      "description": "Reserved"
+    },
+    "license": {
+      "type": "string",
+      "description": "Reserved: SPDX license identifier"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "mcp-stdio"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "run": {
+            "$ref": "#/$defs/package_run"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "mcp-http"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "run": {
+            "$ref": "#/$defs/url_run"
+          },
+          "placement": {
+            "const": "container"
+          }
+        },
+        "not": {
+          "required": ["image"]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "builtin"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "run": {
+            "$ref": "#/$defs/builtin_run"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "run": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/package_run"
+        },
+        {
+          "$ref": "#/$defs/url_run"
+        },
+        {
+          "$ref": "#/$defs/builtin_run"
+        }
+      ]
+    },
+    "package_run": {
+      "type": "object",
+      "required": ["command", "package", "version"],
+      "additionalProperties": false,
+      "description": "npx <package>@<version> or uvx <package>==<version>, an exact version",
+      "properties": {
+        "command": {
+          "enum": ["npx", "uvx"]
+        },
+        "package": {
+          "type": "string",
+          "pattern": "^(?:@[a-z0-9][a-z0-9._-]*/)?[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){1,3}(?:[-.+]?[0-9A-Za-z.]+)?$",
+          "description": "Exact: no ranges, wildcards (1.2.x), tags or 'latest'",
+          "not": {
+            "pattern": "(?:^|[.])[xX*](?:[.]|$)"
+          }
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Arguments after the package"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "npx"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "version": {
+                "$ref": "agent.schema.json#/$defs/semver",
+                "description": "npm reads a partial version (1.2) as a range, so npx needs all three parts"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "url_run": {
+      "type": "object",
+      "required": ["url"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        }
+      }
+    },
+    "builtin_run": {
+      "type": "object",
+      "required": ["builtin"],
+      "additionalProperties": false,
+      "properties": {
+        "builtin": {
+          "type": "string",
+          "pattern": "^[a-z0-9_-]+$"
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": ["none", "api_key", "oauth", "device_code"],
+          "description": "api_key: the user pastes a key, kept in the OS keyring; oauth/device_code: the user signs in"
+        },
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          },
+          "description": "api_key on a stdio server: the environment variables the key goes into. An HTTP server gets it as the bearer token"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "oauth/device_code: the scopes it asks for"
+        },
+        "label": {
+          "type": "string",
+          "description": "What the key or account is called, e.g. 'Linear API key'"
+        }
+      }
+    },
+    "tool": {
+      "type": "object",
+      "required": ["name", "description", "access"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "access": {
+          "enum": ["read", "write"],
+          "description": "write: changes something (sends, creates, deletes). Write tools need a write grant and the user's approval of each call"
+        }
+      }
+    },
+    "host": {
+      "type": "string",
+      "pattern": "^(?:\\*\\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?::[0-9]{1,5})?$"
+    }
+  }
+}

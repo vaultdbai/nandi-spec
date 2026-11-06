@@ -1,0 +1,14 @@
+[package]
+name = "registry-schema"
+version = "0.1.0"
+description = "Tests for the registry JSON Schemas in registry-schema/"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dev-dependencies]
+jsonschema = { version = "0.60.2", default-features = false }
+serde_json = { workspace = true }

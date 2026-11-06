@@ -1,0 +1,36 @@
+{
+  "id": "fetch",
+  "name": "Web page fetch",
+  "description": "Fetch a web page and read it as Markdown.",
+  "publisher": "vaultdbai",
+  "repo": "github.com/vaultdbai/nandi-connectors",
+  "path": "connectors/fetch",
+  "latest_version": "1.0.0",
+  "ref": "fetch-v1.0.0",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "signature": "ed25519:c2lnbmF0dXJlLWV4YW1wbGU=",
+  "min_nandi_version": "0.1.0",
+  "tags": ["web"],
+  "kind": "mcp-stdio",
+  "run": {
+    "command": "npx",
+    "package": "@acme/mcp-server",
+    "version": "1.2"
+  },
+  "placement": "container",
+  "auth": {
+    "type": "none"
+  },
+  "tools": [
+    {
+      "name": "fetch",
+      "description": "Fetch a URL and return its text",
+      "access": "read"
+    }
+  ],
+  "data": {
+    "read": ["Web pages you ask it to open"],
+    "write": []
+  },
+  "hosts": ["example.com", "*.example.org"]
+}
