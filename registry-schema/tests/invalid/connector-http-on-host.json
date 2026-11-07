@@ -1,0 +1,38 @@
+{
+  "id": "tracker",
+  "name": "Issue tracker",
+  "description": "Read and create issues in an issue tracker.",
+  "publisher": "acme",
+  "repo": "github.com/acme/nandi-connectors",
+  "path": "connectors/tracker",
+  "latest_version": "2.1.0",
+  "min_nandi_version": "0.1.0",
+  "tags": ["issues", "project-management"],
+  "kind": "mcp-http",
+  "run": {
+    "url": "https://mcp.example.com/mcp"
+  },
+  "placement": "host",
+  "auth": {
+    "type": "oauth",
+    "label": "Tracker account",
+    "scopes": ["read", "write"]
+  },
+  "tools": [
+    {
+      "name": "search_issues",
+      "description": "Search issues by text",
+      "access": "read"
+    },
+    {
+      "name": "create_issue",
+      "description": "Create an issue",
+      "access": "write"
+    }
+  ],
+  "data": {
+    "read": ["Your issues and projects"],
+    "write": ["New issues"]
+  },
+  "hosts": ["mcp.example.com"]
+}

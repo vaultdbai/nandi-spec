@@ -1,0 +1,19 @@
+{
+  "id": "pr-reviewer",
+  "name": "PR Reviewer",
+  "description": "Reviews a pull request and leaves comments.",
+  "publisher": "vaultdbai",
+  "repo": "github.com/vaultdbai/nandi-dev-pack",
+  "path": "agents/pr-reviewer",
+  "latest_version": "0.5.0",
+  "tags": ["code-review"],
+  "min_nandi_version": "0.1.0",
+  "capabilities": {
+    "tools": ["read_file"],
+    "network": ["github.com"],
+    "pilots": [],
+    "connectors": ["fetch"]
+  },
+  "icon_url": "https://example.com/icon.png",
+  "readme_url": "https://example.com/README.md"
+}
