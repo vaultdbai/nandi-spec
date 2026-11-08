@@ -50,8 +50,8 @@ pub use directory::{
 pub use duty::{DutyDecision, DutyState, HandoverReason};
 pub use gateway::{GatewayCard, GATEWAY_AGENT_ID, GATEWAY_VERSION};
 pub use group::{
-    GroupChange, GroupDetail, GroupInvite, GroupMember, GroupOp, GroupOutcome, GroupPolicy,
-    GroupRole, GroupSummary, Visibility, NO_SHARED_GROUP,
+    is_group_id, GroupChange, GroupDetail, GroupInvite, GroupMember, GroupOp, GroupOutcome,
+    GroupPolicy, GroupRole, GroupSummary, Visibility, NO_SHARED_GROUP,
 };
 pub use http::{
     split_token, EnrollRequest, EnrollResponse, RelayHealth, RelayInstanceInfo, DEFAULT_RELAY_PORT,

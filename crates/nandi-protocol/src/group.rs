@@ -54,6 +54,17 @@ pub const GROUP_LIMIT: &str = "group_limit";
 /// [`Visibility::Groups`] relay
 pub const NO_SHARED_GROUP: &str = "no_shared_group";
 
+/// A group ID: `g_` and 16 lowercase hex characters, picked at random by
+/// the group's creator
+pub fn is_group_id(id: &str) -> bool {
+    id.strip_prefix("g_").is_some_and(|hex| {
+        hex.len() == 16
+            && hex
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+
 /// Who sees whom on a relay
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
@@ -170,8 +181,11 @@ pub enum GroupOp {
     List,
     /// One group in full (members only)
     Get { group_id: String },
-    /// A new group, the asker its first admin; `policy.version` is 1
+    /// A new group, the asker its first admin; `policy.version` is 1.
+    /// The creator picks `group_id` ([`is_group_id`]), so it can sign the
+    /// first policy over it; the relay refuses one that is taken.
     Create {
+        group_id: String,
         name: String,
         description: String,
         policy: GroupPolicy,
@@ -314,6 +328,14 @@ mod tests {
         assert_ne!(a, GroupPolicy::signed_bytes("g2", 1, "text"));
         assert_ne!(a, GroupPolicy::signed_bytes("g1", 2, "text"));
         assert!(a.starts_with(b"nandi-group-policy-v1\n"));
+    }
+
+    #[test]
+    fn group_ids_are_g_and_16_hex() {
+        assert!(is_group_id("g_0123456789abcdef"));
+        assert!(!is_group_id("g_0123456789ABCDEF"));
+        assert!(!is_group_id("g_0123"));
+        assert!(!is_group_id("x_0123456789abcdef"));
     }
 
     #[test]
