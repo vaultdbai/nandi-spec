@@ -42,6 +42,9 @@ pub struct RelayHealth {
     /// The relay's [`crate::PROTOCOL_VERSION`]
     #[serde(default)]
     pub protocol_version: u32,
+    /// Who sees whom on this relay
+    #[serde(default)]
+    pub visibility: crate::group::Visibility,
 }
 
 /// One entry of `GET /instances`
