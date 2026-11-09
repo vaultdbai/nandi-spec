@@ -7,6 +7,7 @@
 //! - [`card`], [`gateway`], [`presence`]: what instances publish about
 //!   themselves
 //! - [`directory`]: the member directory, availability and people search
+//! - [`group`]: groups, invites, group policies and visibility by group
 //! - [`routing`]: who gets a request (`RouteQuery` → `RoutePlan`)
 //! - [`keys`]: per-instance public keys and sealed envelopes
 //! - [`content`]: what each sealed envelope holds
@@ -26,6 +27,7 @@ pub mod content;
 pub mod directory;
 pub mod duty;
 pub mod gateway;
+pub mod group;
 pub mod http;
 pub mod keys;
 pub mod mail;
@@ -47,6 +49,10 @@ pub use directory::{
 };
 pub use duty::{DutyDecision, DutyState, HandoverReason};
 pub use gateway::{GatewayCard, GATEWAY_AGENT_ID, GATEWAY_VERSION};
+pub use group::{
+    is_group_id, GroupChange, GroupDetail, GroupInvite, GroupMember, GroupOp, GroupOutcome,
+    GroupPolicy, GroupRole, GroupSummary, Visibility, NO_SHARED_GROUP,
+};
 pub use http::{
     split_token, EnrollRequest, EnrollResponse, RelayHealth, RelayInstanceInfo, DEFAULT_RELAY_PORT,
     JOIN_CODE_ENV, PROBE_PAYLOAD, RELAY_PATH, SECRET_ENV,
@@ -88,7 +94,9 @@ pub use time::{now_ms, Timestamp};
 ///   `Undeliverable`, the relay's `Peer` to a client, `ReassignTask`,
 ///   `TaskTimedOut`, `DutyQuery`/`DutyStatus`, `StatusResponse`'s result
 ///   and `SealedTask.continues`.
-pub const PROTOCOL_VERSION: u32 = 6;
+/// - 7: groups (`GroupRequest` → `GroupReply`, `GroupChanged`, see
+///   [`group`]), the relay's [`Visibility`] on `Registered` and `/health`
+pub const PROTOCOL_VERSION: u32 = 7;
 
 #[cfg(test)]
 pub(crate) mod fixtures;

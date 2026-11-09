@@ -39,6 +39,7 @@ use crate::card::AgentCard;
 use crate::directory::{MemberRecord, PeopleMatch};
 use crate::duty::DutyState;
 use crate::gateway::GatewayCard;
+use crate::group::{GroupChange, GroupOp, GroupOutcome, Visibility};
 use crate::keys::{Envelope, InstanceKeys, PublicKeys};
 use crate::mail::Delivery;
 use crate::presence::{CapabilityPresence, InstancePresence};
@@ -116,6 +117,9 @@ pub enum RelayMessage {
     /// Registration accepted
     Registered {
         instance_id: String,
+        /// Who sees whom on this relay
+        #[serde(default)]
+        visibility: Visibility,
     },
     CapabilityResult {
         capability: String,
@@ -154,6 +158,23 @@ pub enum RelayMessage {
     RegisterGateway {
         instance_id: String,
         card: GatewayCard,
+    },
+
+    // Groups (see `group`)
+    /// Instance → relay
+    GroupRequest {
+        request_id: String,
+        op: GroupOp,
+    },
+    /// Relay → instance, for the `GroupRequest` with this `request_id`
+    GroupReply {
+        request_id: String,
+        outcome: GroupOutcome,
+    },
+    /// Relay → each member online (and someone invited): the group changed
+    GroupChanged {
+        group_id: String,
+        change: GroupChange,
     },
 
     // The member directory and people search (see `directory`)
@@ -529,6 +550,19 @@ mod tests {
             },
             RelayMessage::Registered {
                 instance_id: "i1".into(),
+                visibility: crate::group::Visibility::Groups,
+            },
+            RelayMessage::GroupRequest {
+                request_id: "r1".into(),
+                op: crate::group::GroupOp::Join { code: "abc".into() },
+            },
+            RelayMessage::GroupReply {
+                request_id: "r1".into(),
+                outcome: crate::group::GroupOutcome::Done,
+            },
+            RelayMessage::GroupChanged {
+                group_id: "g1".into(),
+                change: crate::group::GroupChange::PolicyChanged { version: 2 },
             },
             RelayMessage::CapabilityResult {
                 capability: "find-papers".into(),
