@@ -125,9 +125,14 @@ pub enum RelayMessage {
         capability: String,
         agents: Vec<AgentCard>,
     },
+    /// A refusal. One about a task names it in `task_id`, so a client
+    /// matches it to what it sent without reading `message`.
     Error {
         code: String,
         message: String,
+        /// The task it refuses; left out when it isn't about one
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
     },
 
     // Store-and-forward (see `mail`)
@@ -436,6 +441,18 @@ pub const ALL_CAPABILITIES: &str = "*";
 /// The `Error` code of a registration refused for its protocol version
 pub const VERSION_MISMATCH: &str = "version_mismatch";
 
+/// The `Error` code of a result or a kept message for a task that ended.
+/// Final: the relay will never take it.
+pub const TASK_ENDED: &str = "task_ended";
+
+/// The `Error` code of a message from someone who isn't a side of the
+/// task (any more). Final.
+pub const NOT_A_PARTY: &str = "not_a_party";
+
+/// The `Error` code of a message about a task the relay doesn't know.
+/// Final.
+pub const UNKNOWN_TASK: &str = "unknown_task";
+
 impl RelayMessage {
     /// Every envelope it carries (to check [`crate::MAX_ENVELOPE_BYTES`])
     pub fn envelopes(&self) -> Vec<&Envelope> {
@@ -571,6 +588,12 @@ mod tests {
             RelayMessage::Error {
                 code: "unauthorized".into(),
                 message: "bad token".into(),
+                task_id: None,
+            },
+            RelayMessage::Error {
+                code: TASK_ENDED.into(),
+                message: "Task t1 already ended".into(),
+                task_id: Some("t1".into()),
             },
             RelayMessage::Ack {
                 mail_ids: vec![1, 2],
@@ -828,6 +851,37 @@ mod tests {
         assert_eq!(
             live,
             vec![false, false, true, false, true, true, false, false, false, false, false]
+        );
+    }
+
+    #[test]
+    fn an_error_names_its_task_only_when_it_has_one() {
+        let about_task = RelayMessage::Error {
+            code: TASK_ENDED.into(),
+            message: "Task t1 already ended".into(),
+            task_id: Some("t1".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&about_task).unwrap(),
+            json!({"type": "error", "code": "task_ended",
+                   "message": "Task t1 already ended", "taskId": "t1"})
+        );
+        // An older relay's error, without the field, still reads
+        let plain = RelayMessage::from_json(
+            r#"{"type": "error", "code": "unauthorized", "message": "bad token"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            plain,
+            RelayMessage::Error {
+                code: "unauthorized".into(),
+                message: "bad token".into(),
+                task_id: None,
+            }
+        );
+        assert_eq!(
+            plain.to_json().unwrap(),
+            r#"{"type":"error","code":"unauthorized","message":"bad token"}"#
         );
     }
 

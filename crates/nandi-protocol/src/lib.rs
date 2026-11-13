@@ -62,7 +62,10 @@ pub use keys::{
     MAX_ENVELOPE_BYTES, SEAL_SUITE,
 };
 pub use mail::{Delivery, FailoverCause, TaskEvent};
-pub use message::{PeerMessage, RelayMessage, ALL_CAPABILITIES, VERSION_MISMATCH};
+pub use message::{
+    PeerMessage, RelayMessage, ALL_CAPABILITIES, NOT_A_PARTY, TASK_ENDED, UNKNOWN_TASK,
+    VERSION_MISMATCH,
+};
 pub use presence::{CapabilityPresence, InstancePresence, ProviderKind, ProviderPresence};
 pub use routing::{
     NoRoute, RequestKind, RouteCandidate, RoutePlan, RouteReason, RouteStrategy, RouteTarget,
