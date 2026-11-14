@@ -8,6 +8,8 @@
 //!   themselves
 //! - [`directory`]: the member directory, availability and people search
 //! - [`group`]: groups, invites, group policies and visibility by group
+//! - [`group_rules`]: the `requests:` rules a relay reads from a group's
+//!   policy
 //! - [`routing`]: who gets a request (`RouteQuery` → `RoutePlan`)
 //! - [`keys`]: per-instance public keys and sealed envelopes
 //! - [`content`]: what each sealed envelope holds
@@ -31,6 +33,7 @@ pub mod directory;
 pub mod duty;
 pub mod gateway;
 pub mod group;
+pub mod group_rules;
 pub mod http;
 pub mod keys;
 pub mod mail;
@@ -54,10 +57,12 @@ pub use directory::{
 pub use duty::{DutyDecision, DutyState, HandoverReason};
 pub use gateway::{GatewayCard, GATEWAY_AGENT_ID, GATEWAY_VERSION};
 pub use group::{
-    is_group_id, GroupApproval, GroupChange, GroupDetail, GroupInvite, GroupMember, GroupOp,
-    GroupOutcome, GroupPolicy, GroupRequestRules, GroupRole, GroupSummary, Visibility,
-    GROUP_DAILY_LIMIT, NEEDS_FIRST_TIME_APPROVAL, NO_SHARED_GROUP,
+    is_group_id, GroupApproval, GroupChange, GroupDetail, GroupHold, GroupInvite, GroupMember,
+    GroupOp, GroupOutcome, GroupPolicy, GroupRole, GroupSummary, Visibility,
+    GROUP_CAPABILITY_NOT_ALLOWED, GROUP_DAILY_LIMIT, HOLD_ALWAYS_ASK, HOLD_APPROVAL_ALWAYS,
+    HOLD_OUTSIDE_HOURS, NEEDS_FIRST_TIME_APPROVAL, NO_SHARED_GROUP,
 };
+pub use group_rules::{CapabilityRules, GroupHours, GroupRequestRules};
 pub use http::{
     split_token, EnrollRequest, EnrollResponse, RelayHealth, RelayInstanceInfo, DEFAULT_RELAY_PORT,
     JOIN_CODE_ENV, PROBE_PAYLOAD, RELAY_PATH, SECRET_ENV,

@@ -16,5 +16,7 @@ specta = ["dep:specta"]
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+glob.workspace = true
+jiff.workspace = true
 strum.workspace = true
 specta = { workspace = true, optional = true }

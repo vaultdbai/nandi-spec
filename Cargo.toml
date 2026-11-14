@@ -15,6 +15,12 @@ serde_json = "1"
 # Reads a group policy's frontmatter (`GroupRequestRules::read`); the
 # Nandi app and the relay use the same version
 serde_yaml = "0.9"
+# Group policy patterns (`requests.capabilities`, `always_ask`); the Nandi
+# app uses the same version
+glob = "0.3.4"
+# Group policy hours in their IANA time zone, from the bundled database
+# only (no system files: the crate does no I/O)
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 # The text form of the stored enums (`as_str` and `FromStr`); the Nandi app
 # uses the same version
 strum = { version = "0.28", features = ["derive"] }

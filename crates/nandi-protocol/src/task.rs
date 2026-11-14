@@ -11,6 +11,7 @@ use serde_json::Value;
 use strum::{EnumString, IntoStaticStr, ParseError, VariantArray};
 
 use crate::card::AgentCard;
+use crate::group::GroupHold;
 use crate::keys::Envelope;
 use crate::time::Timestamp;
 
@@ -54,6 +55,12 @@ pub struct SealedTask {
     /// the relay ([`crate::GroupRequestRules`]); empty for most tasks.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub first_time_groups: Vec<String>,
+    /// The shared groups whose rules have the provider's person approve
+    /// this task before it runs (outside the group's hours, `always_ask`,
+    /// `approval: always`), one hold per group. Set by the relay
+    /// ([`crate::group_rules`]); empty for most tasks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_holds: Vec<GroupHold>,
 }
 
 /// One candidate of a `SubmitTask`: who, and the input sealed for them

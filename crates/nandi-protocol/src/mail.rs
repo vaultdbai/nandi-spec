@@ -137,8 +137,8 @@ pub enum TaskEvent {
     /// bad attempt, a loop, a limit); `message` is the relay's own words.
     /// `code` names a refusal a client tells in its own words
     /// ([`crate::GROUP_DAILY_LIMIT`], [`crate::NEEDS_FIRST_TIME_APPROVAL`],
-    /// [`crate::NO_SHARED_GROUP`], the relay's daily limit); `None` for
-    /// the rest.
+    /// [`crate::GROUP_CAPABILITY_NOT_ALLOWED`], [`crate::NO_SHARED_GROUP`],
+    /// the relay's daily limit); `None` for the rest.
     Refused {
         task_id: String,
         message: String,
@@ -312,8 +312,10 @@ pub(crate) mod tests {
     fn new_fields_are_left_out_when_empty_and_default_when_missing() {
         let mut task = sealed_task();
         task.first_time_groups.clear();
+        task.group_holds.clear();
         let value = serde_json::to_value(&task).unwrap();
         assert!(value.get("firstTimeGroups").is_none(), "{value}");
+        assert!(value.get("groupHolds").is_none(), "{value}");
         assert_eq!(
             serde_json::from_value::<SealedTask>(value).unwrap(),
             task,
@@ -322,6 +324,10 @@ pub(crate) mod tests {
         assert_eq!(
             serde_json::to_value(sealed_task()).unwrap()["firstTimeGroups"],
             json!(["g_0123456789abcdef"])
+        );
+        assert_eq!(
+            serde_json::to_value(sealed_task()).unwrap()["groupHolds"],
+            json!([{"groupId": "g_0123456789abcdef", "code": "always_ask"}])
         );
         let refused: TaskEvent =
             serde_json::from_value(json!({"event": "refused", "taskId": "t1", "message": "No"}))

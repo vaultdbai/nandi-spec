@@ -3,8 +3,8 @@
 use serde_json::json;
 
 use crate::{
-    AgentCard, Availability, Envelope, GatewayCard, OwnerRef, ResultReport, SealPurpose, SealedFor,
-    SealedTask, ServesCapability, TaskStatus, SEAL_SUITE,
+    AgentCard, Availability, Envelope, GatewayCard, GroupHold, OwnerRef, ResultReport, SealPurpose,
+    SealedFor, SealedTask, ServesCapability, TaskStatus, HOLD_ALWAYS_ASK, SEAL_SUITE,
 };
 
 pub(crate) fn card() -> AgentCard {
@@ -61,6 +61,10 @@ pub(crate) fn sealed_task() -> SealedTask {
         deadline: Some(10.0),
         envelope: envelope(SealPurpose::Request),
         first_time_groups: vec!["g_0123456789abcdef".into()],
+        group_holds: vec![GroupHold {
+            group_id: "g_0123456789abcdef".into(),
+            code: HOLD_ALWAYS_ASK.into(),
+        }],
     }
 }
 

@@ -13,21 +13,24 @@
 //!   frontmatter, the same format as a Nandi's own policies, saying what
 //!   members may have done for them and how (forced approvals, allowed
 //!   capabilities, limits). Its author, an admin, signs it with their
-//!   device key; each member's Nandi checks the signature against the
-//!   author's pinned key and enforces the file on work from the group. The
-//!   relay checks that the author is an admin and the version is the next
-//!   one, and reads only the `requests:` rules a relay enforces
+//!   device key. The relay checks that the author is an admin and the
+//!   version is the next one, and reads only its `requests:` rules
 //!   ([`GroupRequestRules`]): nothing else in the text.
-//! - **Request rules at the relay** ([`GroupRequestRules`]): when a
-//!   requester and a provider share a group, the relay applies that
-//!   group's `daily_limit` and `approval: first-time` at `SubmitTask`,
-//!   from metadata only (requester, provider, group, UTC day). Past the
-//!   limit it refuses ([`GROUP_DAILY_LIMIT`]). A requester's first request
-//!   to a provider is delivered marked for the provider's approval
-//!   ([`crate::SealedTask::first_time_groups`]); until the provider takes
-//!   it on, the requester's next one to them is refused
-//!   ([`NEEDS_FIRST_TIME_APPROVAL`]). Everything else in `requests:` is the
-//!   members' Nandis' to apply.
+//! - **Request rules at the relay** ([`crate::group_rules`]): when a
+//!   requester and a provider share a group, the relay applies all of that
+//!   group's `requests:` rules at `SubmitTask`, from metadata only
+//!   (requester, provider, capability, group, the time). A capability the
+//!   group doesn't allow is refused ([`GROUP_CAPABILITY_NOT_ALLOWED`]),
+//!   and so is a request past the daily limit ([`GROUP_DAILY_LIMIT`]). A
+//!   request the group has its members approve (outside its hours,
+//!   `always_ask`, `approval: always`) is delivered held
+//!   ([`crate::SealedTask::group_holds`]). A requester's first request to
+//!   a provider through an `approval: first-time` group is delivered
+//!   marked ([`crate::SealedTask::first_time_groups`]); until the provider
+//!   takes it on, the requester's next one to them is refused
+//!   ([`NEEDS_FIRST_TIME_APPROVAL`]). Each member's Nandi holds a held or
+//!   marked request for its person, and adds only their own access level
+//!   for the group.
 //! - On a relay whose [`Visibility`] is [`Visibility::Groups`] (a public
 //!   relay), members see and reach only people they share a group with:
 //!   the directory, people search, capability queries and presence,
@@ -71,6 +74,20 @@ pub const GROUP_DAILY_LIMIT: &str = "group_daily_limit";
 /// group with `approval: first-time`, still waits for the provider's
 /// approval
 pub const NEEDS_FIRST_TIME_APPROVAL: &str = "needs_first_time_approval";
+/// A request for a capability a shared group doesn't allow
+/// (`requests.capabilities`)
+pub const GROUP_CAPABILITY_NOT_ALLOWED: &str = "group_capability_not_allowed";
+
+/// [`crate::GroupHold::code`]: why a shared group has the provider's person
+/// approve a request before it runs. A client holds a request with any
+/// hold, whatever its code; an unknown code still holds.
+///
+/// It came outside the group's `requests.hours`
+pub const HOLD_OUTSIDE_HOURS: &str = "outside_hours";
+/// Its capability is in the group's `requests.always_ask`
+pub const HOLD_ALWAYS_ASK: &str = "always_ask";
+/// The group says `requests.approval: always`
+pub const HOLD_APPROVAL_ALWAYS: &str = "approval_always";
 
 /// A group ID: `g_` and 16 lowercase hex characters, picked at random by
 /// the group's creator
@@ -173,83 +190,17 @@ pub enum GroupApproval {
     PerMember,
 }
 
-/// The rules in a group's policy that the relay enforces at `SubmitTask`:
-/// `requests.approval` and `requests.daily_limit` in the policy's YAML
-/// frontmatter. The relay reads nothing else in the text.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// A shared group's rule that has the provider's person approve a request
+/// before it runs, set by the relay on the delivery
+/// ([`crate::SealedTask::group_holds`])
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
-pub struct GroupRequestRules {
-    #[serde(default)]
-    pub approval: GroupApproval,
-    /// Requests one requester may send one provider a UTC day; `None`: no
-    /// limit
-    #[serde(default)]
-    pub daily_limit: Option<u32>,
-}
-
-/// The parts of a policy's frontmatter [`GroupRequestRules::read`] looks at
-#[derive(Deserialize)]
-struct PolicyFrontmatter {
-    #[serde(default)]
-    requests: Option<RequestsBlock>,
-}
-
-#[derive(Deserialize)]
-struct RequestsBlock {
-    #[serde(default)]
-    approval: Option<GroupApproval>,
-    #[serde(default)]
-    daily_limit: Option<u32>,
-}
-
-impl GroupRequestRules {
-    /// Reads the rules from a policy file (Markdown with YAML
-    /// frontmatter). No frontmatter or no `requests:` block: the defaults
-    /// (`approval: always`, no limit). Other keys are left to the members'
-    /// Nandis. A `daily_limit` of 0 is an error: leave it out for no limit.
-    pub fn read(policy_text: &str) -> Result<Self, String> {
-        let Some(yaml) = frontmatter(policy_text)? else {
-            return Ok(Self::default());
-        };
-        if yaml.trim().is_empty() {
-            return Ok(Self::default());
-        }
-        let front: PolicyFrontmatter = serde_yaml::from_str(yaml)
-            .map_err(|e| format!("The policy's frontmatter doesn't read: {e}"))?;
-        let Some(requests) = front.requests else {
-            return Ok(Self::default());
-        };
-        if requests.daily_limit == Some(0) {
-            return Err("requests.daily_limit is 0; leave it out for no limit".to_string());
-        }
-        Ok(Self {
-            approval: requests.approval.unwrap_or_default(),
-            daily_limit: requests.daily_limit,
-        })
-    }
-}
-
-/// The YAML between a leading `---` line and the next `---` line; `None`
-/// when the text doesn't start with one
-fn frontmatter(text: &str) -> Result<Option<&str>, String> {
-    let text = text.trim_start_matches('\u{feff}');
-    let mut lines = text.split_inclusive('\n');
-    let Some(first) = lines.next() else {
-        return Ok(None);
-    };
-    if first.trim_end() != "---" {
-        return Ok(None);
-    }
-    let start = first.len();
-    let mut offset = start;
-    for line in lines {
-        if line.trim_end() == "---" {
-            return Ok(Some(&text[start..offset]));
-        }
-        offset += line.len();
-    }
-    Err("The policy's frontmatter has no closing '---'".to_string())
+pub struct GroupHold {
+    pub group_id: String,
+    /// Why: [`HOLD_OUTSIDE_HOURS`], [`HOLD_ALWAYS_ASK`] or
+    /// [`HOLD_APPROVAL_ALWAYS`]
+    pub code: String,
 }
 
 /// An invite: a code for one person or for whoever has it
@@ -449,60 +400,6 @@ mod tests {
         assert!(!is_group_id("g_0123456789ABCDEF"));
         assert!(!is_group_id("g_0123"));
         assert!(!is_group_id("x_0123456789abcdef"));
-    }
-
-    fn rules(approval: GroupApproval, daily_limit: Option<u32>) -> GroupRequestRules {
-        GroupRequestRules {
-            approval,
-            daily_limit,
-        }
-    }
-
-    #[test]
-    fn request_rules_read_only_approval_and_daily_limit() {
-        use GroupApproval::{Always, FirstTime, PerMember};
-        let cases: &[(&str, &str, Result<GroupRequestRules, &str>)] = &[
-            ("no frontmatter", "Just words.\n", Ok(rules(Always, None))),
-            ("empty frontmatter", "---\n---\nWhy.\n", Ok(rules(Always, None))),
-            (
-                "no requests block",
-                "---\ntools: { deny: [shell] }\n---\n",
-                Ok(rules(Always, None)),
-            ),
-            ("an empty block", "---\nrequests:\n---\n", Ok(rules(Always, None))),
-            (
-                "first-time with a limit, other keys left alone",
-                "---\nrequests:\n  approval: first-time\n  daily_limit: 20\n  always_ask: [send]\n  hours: \"Mon-Fri 08:00-18:00\"\n---\nWhy.\n",
-                Ok(rules(FirstTime, Some(20))),
-            ),
-            (
-                "per-member, CRLF and a BOM",
-                "\u{feff}---\r\nrequests:\r\n  approval: per-member\r\n---\r\n",
-                Ok(rules(PerMember, None)),
-            ),
-            (
-                "a limit of 0",
-                "---\nrequests:\n  daily_limit: 0\n---\n",
-                Err("daily_limit is 0"),
-            ),
-            (
-                "an unknown approval",
-                "---\nrequests:\n  approval: sometimes\n---\n",
-                Err("doesn't read"),
-            ),
-            (
-                "no closing line",
-                "---\nrequests:\n  approval: always\n",
-                Err("no closing"),
-            ),
-        ];
-        for (name, text, expected) in cases {
-            match (GroupRequestRules::read(text), expected) {
-                (Ok(got), Ok(want)) => assert_eq!(&got, want, "{name}"),
-                (Err(got), Err(want)) => assert!(got.contains(want), "{name}: {got}"),
-                (got, want) => panic!("{name}: got {got:?}, want {want:?}"),
-            }
-        }
     }
 
     #[test]
