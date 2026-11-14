@@ -6,8 +6,8 @@
 //! `RouteQuery` → `RoutePlan` (see [`crate::routing`]).
 //!
 //! `RegisterInstance` carries the client's [`crate::PROTOCOL_VERSION`]. A
-//! relay that speaks another version refuses it with an `Error` whose code
-//! is [`VERSION_MISMATCH`]. It also carries the instance's public keys,
+//! relay refuses a version outside its [`crate::ProtocolRange`] with an
+//! `Error` whose code is [`VERSION_MISMATCH`]. It also carries the instance's public keys,
 //! which the relay pins (see [`crate::keys`]).
 //!
 //! Content is sealed. Every person-to-person payload (a task's input, its
@@ -438,7 +438,8 @@ impl PeerMessage {
 /// The `QueryCapability` capability that matches every registered card
 pub const ALL_CAPABILITIES: &str = "*";
 
-/// The `Error` code of a registration refused for its protocol version
+/// The `Error` code of a registration refused because its protocol
+/// version is outside the relay's [`crate::ProtocolRange`]
 pub const VERSION_MISMATCH: &str = "version_mismatch";
 
 /// The `Error` code of a result or a kept message for a task that ended.

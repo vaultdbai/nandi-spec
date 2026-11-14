@@ -11,6 +11,7 @@ use crate::card::AgentCard;
 use crate::gateway::GatewayCard;
 use crate::keys::PublicKeys;
 use crate::time::Timestamp;
+use crate::version::ProtocolRange;
 
 /// Default port of a relay
 pub const DEFAULT_RELAY_PORT: u16 = 8787;
@@ -42,9 +43,23 @@ pub struct RelayHealth {
     /// The relay's [`crate::PROTOCOL_VERSION`]
     #[serde(default)]
     pub protocol_version: u32,
+    /// The oldest client version the relay accepts
+    /// ([`crate::MIN_SUPPORTED_PROTOCOL`])
+    #[serde(default)]
+    pub min_supported_protocol: u32,
     /// Who sees whom on this relay
     #[serde(default)]
     pub visibility: crate::group::Visibility,
+}
+
+impl RelayHealth {
+    /// The client versions this relay accepts
+    pub fn protocol_range(&self) -> ProtocolRange {
+        ProtocolRange {
+            min_supported: self.min_supported_protocol,
+            current: self.protocol_version,
+        }
+    }
 }
 
 /// One entry of `GET /instances`
@@ -172,6 +187,20 @@ mod tests {
         .unwrap();
         assert!(!health.tls);
         assert_eq!(health.protocol_version, 0);
+        assert_eq!(health.min_supported_protocol, 0);
+        let health: RelayHealth = serde_json::from_value(json!({
+            "status": "ok", "instances_connected": 0, "uptime_seconds": 0,
+            "version": "1", "auth": "token",
+            "protocol_version": 9, "min_supported_protocol": 7
+        }))
+        .unwrap();
+        assert_eq!(
+            health.protocol_range(),
+            ProtocolRange {
+                min_supported: 7,
+                current: 9
+            }
+        );
         let info = RelayInstanceInfo {
             instance_id: "i1".into(),
             peer: "127.0.0.1:1".into(),

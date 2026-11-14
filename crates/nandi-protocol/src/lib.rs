@@ -15,10 +15,13 @@
 //! - [`mail`]: store-and-forward, each instance's mailbox and task events
 //! - [`duty`]: calendar handovers, watched at the relay
 //! - [`time`]: timestamps on the wire
+//! - [`version`]: the protocol version and the range a relay accepts
 //!
 //! Serde shapes are the wire format: a field is never renamed or retyped
 //! without a [`PROTOCOL_VERSION`] bump, and new fields come with
-//! `#[serde(default)]`. With the `specta` feature every type also derives
+//! `#[serde(default)]` and no bump. A relay accepts the client versions
+//! in its [`ProtocolRange`] (see [`version`] for when to change which
+//! number). With the `specta` feature every type also derives
 //! `specta::Type`, for apps that export them to TypeScript.
 
 pub mod card;
@@ -36,6 +39,7 @@ pub mod presence;
 pub mod routing;
 pub mod task;
 pub mod time;
+pub mod version;
 
 pub use card::{AgentCard, CardTimestamp, OwnerRef, ServesCapability};
 pub use clarification::{ClarificationRequest, ClarificationResponse, Question};
@@ -76,30 +80,7 @@ pub use task::{
     TaskState, TaskStatus,
 };
 pub use time::{now_ms, Timestamp};
-
-/// The wire version. A relay refuses a client that speaks another one.
-///
-/// - 1: versions on registration and `/health`
-/// - 2: the member directory (`QueryDirectory`) and people search
-///   (`FindPeople`)
-/// - 3: per-instance public keys at enrollment and registration, pinned
-///   by the relay (`key_mismatch`) and carried in the directory
-/// - 4: every person-to-person payload sealed (`envelope` replaces
-///   `input`, `output`, `error`, notes, reasons, questions and answers),
-///   `PublicKeysQuery`, the envelope cap (`envelope_too_large`)
-/// - 5: routing at the relay (`RouteQuery` → `RoutePlan`, see [`routing`])
-/// - 6: the team brain at the relay. Store-and-forward (`SubmitTask` with
-///   an envelope per candidate, `Deliver`/`Ack`/`InboxSync`, see [`mail`]),
-///   failover, timeouts and abandons at the relay ([`TaskEvent`]),
-///   reassignment (`Reassign`, `ReassignResult`, [`Delivery::Reseal`]) and
-///   calendar handovers (`DutyWatch`, `DutyReport`, see [`duty`]). Gone:
-///   `DelegateTask`, `TaskAssigned`, `TaskCompleted`, `TaskFailed`,
-///   `Undeliverable`, the relay's `Peer` to a client, `ReassignTask`,
-///   `TaskTimedOut`, `DutyQuery`/`DutyStatus`, `StatusResponse`'s result
-///   and `SealedTask.continues`.
-/// - 7: groups (`GroupRequest` → `GroupReply`, `GroupChanged`, see
-///   [`group`]), the relay's [`Visibility`] on `Registered` and `/health`
-pub const PROTOCOL_VERSION: u32 = 7;
+pub use version::{ProtocolRange, VersionGap, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
 
 #[cfg(test)]
 pub(crate) mod fixtures;
