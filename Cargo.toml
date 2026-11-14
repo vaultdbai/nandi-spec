@@ -12,6 +12,9 @@ authors = ["VaultDB.ai"]
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The text form of the stored enums (`as_str` and `FromStr`); the Nandi app
+# uses the same version
+strum = { version = "0.28", features = ["derive"] }
 # Same version and features as the Nandi app, so its generated TypeScript
 # bindings don't change
 specta = { version = "=2.0.0-rc.22", features = ["derive", "serde_json"] }

@@ -8,6 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use strum::{EnumString, IntoStaticStr, ParseError, VariantArray};
 
 use crate::card::AgentCard;
 use crate::keys::Envelope;
@@ -65,9 +66,23 @@ impl TaskAttempt {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A delegated task's outcome. Its text (strum) is its serde name: both are
+/// camelCase.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    EnumString,
+    IntoStaticStr,
+    VariantArray,
+)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
+#[strum(serialize_all = "camelCase")]
 pub enum TaskStatus {
     /// Sent, no result yet
     Running,
@@ -80,49 +95,48 @@ pub enum TaskStatus {
 impl TaskStatus {
     /// As stored in `delegations.status` (the serde name)
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Cancelled => "cancelled",
-            Self::TimedOut => "timedOut",
-        }
+        self.into()
     }
 
-    pub fn parse(value: &str) -> Self {
-        match value {
-            "running" => Self::Running,
-            "completed" => Self::Completed,
-            "cancelled" => Self::Cancelled,
-            "timedOut" => Self::TimedOut,
-            _ => Self::Failed,
-        }
+    /// Reads a stored [`Self::as_str`]. Text no variant has is an error,
+    /// never a default.
+    pub fn parse(value: &str) -> Result<Self, ParseError> {
+        value.parse()
     }
 }
 
-/// Whether we asked (`Outbound`) or served (`Inbound`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Whether we asked (`Outbound`) or served (`Inbound`). Its text (strum) is
+/// its serde name: both are camelCase.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    EnumString,
+    IntoStaticStr,
+    VariantArray,
+)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
+#[strum(serialize_all = "camelCase")]
 pub enum DelegationDirection {
     Outbound,
     Inbound,
 }
 
 impl DelegationDirection {
+    /// As stored in `delegations.direction` (the serde name)
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Outbound => "outbound",
-            Self::Inbound => "inbound",
-        }
+        self.into()
     }
 
-    pub fn parse(value: &str) -> Self {
-        if value == "inbound" {
-            Self::Inbound
-        } else {
-            Self::Outbound
-        }
+    /// Reads a stored [`Self::as_str`]. Text no variant has is an error,
+    /// never a default.
+    pub fn parse(value: &str) -> Result<Self, ParseError> {
+        value.parse()
     }
 }
 
@@ -360,22 +374,65 @@ mod tests {
         assert_eq!(ReasonKind::Queued.for_requester(), ReasonKind::Queued);
     }
 
+    /// The wire and stored text of every status, written out by hand so a
+    /// change to the derives can't change it unnoticed
+    const STATUS_NAMES: [(TaskStatus, &str); 5] = [
+        (TaskStatus::Running, "running"),
+        (TaskStatus::Completed, "completed"),
+        (TaskStatus::Failed, "failed"),
+        (TaskStatus::Cancelled, "cancelled"),
+        (TaskStatus::TimedOut, "timedOut"),
+    ];
+
+    const DIRECTION_NAMES: [(DelegationDirection, &str); 2] = [
+        (DelegationDirection::Outbound, "outbound"),
+        (DelegationDirection::Inbound, "inbound"),
+    ];
+
     #[test]
-    fn statuses_and_directions_round_trip_through_their_names() {
-        for status in [
-            TaskStatus::Running,
-            TaskStatus::Completed,
-            TaskStatus::Failed,
-            TaskStatus::Cancelled,
-            TaskStatus::TimedOut,
-        ] {
-            assert_eq!(TaskStatus::parse(status.as_str()), status);
-            assert_eq!(serde_json::to_value(status).unwrap(), status.as_str());
+    fn statuses_keep_their_wire_and_stored_names() {
+        assert_eq!(STATUS_NAMES.len(), TaskStatus::VARIANTS.len());
+        for (status, name) in STATUS_NAMES {
+            assert_eq!(
+                serde_json::to_string(&status).unwrap(),
+                format!("\"{name}\"")
+            );
+            assert_eq!(
+                serde_json::from_str::<TaskStatus>(&format!("\"{name}\"")).unwrap(),
+                status
+            );
+            assert_eq!(status.as_str(), name);
+            assert_eq!(TaskStatus::parse(name), Ok(status));
         }
-        assert_eq!(TaskStatus::parse("bogus"), TaskStatus::Failed);
-        for direction in [DelegationDirection::Outbound, DelegationDirection::Inbound] {
-            assert_eq!(DelegationDirection::parse(direction.as_str()), direction);
-            assert_eq!(serde_json::to_value(direction).unwrap(), direction.as_str());
+    }
+
+    #[test]
+    fn directions_keep_their_wire_and_stored_names() {
+        assert_eq!(DIRECTION_NAMES.len(), DelegationDirection::VARIANTS.len());
+        for (direction, name) in DIRECTION_NAMES {
+            assert_eq!(
+                serde_json::to_string(&direction).unwrap(),
+                format!("\"{name}\"")
+            );
+            assert_eq!(
+                serde_json::from_str::<DelegationDirection>(&format!("\"{name}\"")).unwrap(),
+                direction
+            );
+            assert_eq!(direction.as_str(), name);
+            assert_eq!(DelegationDirection::parse(name), Ok(direction));
+        }
+    }
+
+    #[test]
+    fn unknown_status_and_direction_text_is_an_error() {
+        for text in ["bogus", "", "Running", "timed_out", "TimedOut"] {
+            assert!(TaskStatus::parse(text).is_err(), "status {text:?}");
+        }
+        for text in ["bogus", "", "Inbound", "OUTBOUND"] {
+            assert!(
+                DelegationDirection::parse(text).is_err(),
+                "direction {text:?}"
+            );
         }
     }
 }
