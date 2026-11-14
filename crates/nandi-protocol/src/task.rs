@@ -192,9 +192,24 @@ pub struct ResultReport {
     pub envelope: Envelope,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Where a task is in its lifecycle. Its text (strum) is its serde name:
+/// both are camelCase.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    EnumString,
+    IntoStaticStr,
+    VariantArray,
+)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
+#[strum(serialize_all = "camelCase")]
 pub enum TaskState {
     Submitted,
     Delivered,
@@ -212,41 +227,15 @@ pub enum TaskState {
 }
 
 impl TaskState {
-    pub const ALL: [TaskState; 12] = [
-        Self::Submitted,
-        Self::Delivered,
-        Self::Acknowledged,
-        Self::Working,
-        Self::InputRequired,
-        Self::Completed,
-        Self::Failed,
-        Self::Rejected,
-        Self::Cancelled,
-        Self::TimedOut,
-        Self::Abandoned,
-        Self::Reassigned,
-    ];
-
     /// As stored in `tasks.state` (the serde name)
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Submitted => "submitted",
-            Self::Delivered => "delivered",
-            Self::Acknowledged => "acknowledged",
-            Self::Working => "working",
-            Self::InputRequired => "inputRequired",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Rejected => "rejected",
-            Self::Cancelled => "cancelled",
-            Self::TimedOut => "timedOut",
-            Self::Abandoned => "abandoned",
-            Self::Reassigned => "reassigned",
-        }
+        self.into()
     }
 
-    pub fn parse(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|s| s.as_str() == value)
+    /// Reads a stored [`Self::as_str`]. Text no variant has is an error,
+    /// never a default.
+    pub fn parse(value: &str) -> Result<Self, ParseError> {
+        value.parse()
     }
 
     pub fn is_terminal(self) -> bool {
@@ -265,10 +254,24 @@ impl TaskState {
 
 /// Why a task waits or was refused: the Blocker kinds of work-model §2.3,
 /// plus `declined` (the owner said no to a held request). Set where the
-/// decision is made, so nothing downstream parses reason text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// decision is made, so nothing downstream parses reason text. Its text
+/// (strum) is its serde name: both are camelCase.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    EnumString,
+    IntoStaticStr,
+    VariantArray,
+)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
+#[strum(serialize_all = "camelCase")]
 pub enum ReasonKind {
     NeedsMyApproval,
     NeedsTheirApproval,
@@ -287,44 +290,15 @@ pub enum ReasonKind {
 }
 
 impl ReasonKind {
-    pub const ALL: [ReasonKind; 14] = [
-        Self::NeedsMyApproval,
-        Self::NeedsTheirApproval,
-        Self::NeedsMyAnswer,
-        Self::NeedsTheirAnswer,
-        Self::NotTrusted,
-        Self::NotAccepting,
-        Self::PausedOrBlocked,
-        Self::Queued,
-        Self::Offline,
-        Self::NoModel,
-        Self::RuntimeAuth,
-        Self::TimedOut,
-        Self::Failed,
-        Self::Declined,
-    ];
-
+    /// As stored in `reason_kind` columns (the serde name)
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::NeedsMyApproval => "needsMyApproval",
-            Self::NeedsTheirApproval => "needsTheirApproval",
-            Self::NeedsMyAnswer => "needsMyAnswer",
-            Self::NeedsTheirAnswer => "needsTheirAnswer",
-            Self::NotTrusted => "notTrusted",
-            Self::NotAccepting => "notAccepting",
-            Self::PausedOrBlocked => "pausedOrBlocked",
-            Self::Queued => "queued",
-            Self::Offline => "offline",
-            Self::NoModel => "noModel",
-            Self::RuntimeAuth => "runtimeAuth",
-            Self::TimedOut => "timedOut",
-            Self::Failed => "failed",
-            Self::Declined => "declined",
-        }
+        self.into()
     }
 
-    pub fn parse(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|kind| kind.as_str() == value)
+    /// Reads a stored [`Self::as_str`]. Text no variant has is an error,
+    /// never a default.
+    pub fn parse(value: &str) -> Result<Self, ParseError> {
+        value.parse()
     }
 
     /// The same reason seen from the other side of the task: a hold for my
@@ -342,23 +316,79 @@ impl ReasonKind {
 mod tests {
     use super::*;
 
+    /// The wire and stored text of every state, written out by hand so a
+    /// change to the derives can't change it unnoticed
+    const STATE_NAMES: [(TaskState, &str); 12] = [
+        (TaskState::Submitted, "submitted"),
+        (TaskState::Delivered, "delivered"),
+        (TaskState::Acknowledged, "acknowledged"),
+        (TaskState::Working, "working"),
+        (TaskState::InputRequired, "inputRequired"),
+        (TaskState::Completed, "completed"),
+        (TaskState::Failed, "failed"),
+        (TaskState::Rejected, "rejected"),
+        (TaskState::Cancelled, "cancelled"),
+        (TaskState::TimedOut, "timedOut"),
+        (TaskState::Abandoned, "abandoned"),
+        (TaskState::Reassigned, "reassigned"),
+    ];
+
+    const REASON_NAMES: [(ReasonKind, &str); 14] = [
+        (ReasonKind::NeedsMyApproval, "needsMyApproval"),
+        (ReasonKind::NeedsTheirApproval, "needsTheirApproval"),
+        (ReasonKind::NeedsMyAnswer, "needsMyAnswer"),
+        (ReasonKind::NeedsTheirAnswer, "needsTheirAnswer"),
+        (ReasonKind::NotTrusted, "notTrusted"),
+        (ReasonKind::NotAccepting, "notAccepting"),
+        (ReasonKind::PausedOrBlocked, "pausedOrBlocked"),
+        (ReasonKind::Queued, "queued"),
+        (ReasonKind::Offline, "offline"),
+        (ReasonKind::NoModel, "noModel"),
+        (ReasonKind::RuntimeAuth, "runtimeAuth"),
+        (ReasonKind::TimedOut, "timedOut"),
+        (ReasonKind::Failed, "failed"),
+        (ReasonKind::Declined, "declined"),
+    ];
+
     #[test]
-    fn states_round_trip_through_their_names() {
-        for state in TaskState::ALL {
-            assert_eq!(TaskState::parse(state.as_str()), Some(state));
-            let json = serde_json::to_value(state).unwrap();
-            assert_eq!(json, state.as_str());
+    fn states_keep_their_wire_and_stored_names() {
+        assert_eq!(STATE_NAMES.len(), TaskState::VARIANTS.len());
+        for (state, name) in STATE_NAMES {
+            assert_eq!(
+                serde_json::to_string(&state).unwrap(),
+                format!("\"{name}\"")
+            );
+            assert_eq!(
+                serde_json::from_str::<TaskState>(&format!("\"{name}\"")).unwrap(),
+                state
+            );
+            assert_eq!(state.as_str(), name);
+            assert_eq!(TaskState::parse(name), Ok(state));
         }
-        assert_eq!(TaskState::parse("bogus"), None);
     }
 
     #[test]
-    fn reasons_round_trip_through_their_names() {
-        for kind in ReasonKind::ALL {
-            assert_eq!(ReasonKind::parse(kind.as_str()), Some(kind));
-            assert_eq!(serde_json::to_value(kind).unwrap(), kind.as_str());
+    fn reasons_keep_their_wire_and_stored_names() {
+        assert_eq!(REASON_NAMES.len(), ReasonKind::VARIANTS.len());
+        for (kind, name) in REASON_NAMES {
+            assert_eq!(serde_json::to_string(&kind).unwrap(), format!("\"{name}\""));
+            assert_eq!(
+                serde_json::from_str::<ReasonKind>(&format!("\"{name}\"")).unwrap(),
+                kind
+            );
+            assert_eq!(kind.as_str(), name);
+            assert_eq!(ReasonKind::parse(name), Ok(kind));
         }
-        assert_eq!(ReasonKind::parse("bogus"), None);
+    }
+
+    #[test]
+    fn unknown_state_and_reason_text_is_an_error() {
+        for text in ["bogus", "", "Submitted", "input_required", "TimedOut"] {
+            assert!(TaskState::parse(text).is_err(), "state {text:?}");
+        }
+        for text in ["bogus", "", "Queued", "needs_my_answer", "NOMODEL"] {
+            assert!(ReasonKind::parse(text).is_err(), "reason {text:?}");
+        }
     }
 
     #[test]
