@@ -48,6 +48,12 @@ pub struct SealedTask {
     /// by the provider it was reassigned from (the requester's signature
     /// kept). Bound to this task's ID either way.
     pub envelope: Envelope,
+    /// The shared groups with `approval: first-time` whose first request
+    /// from this requester to this provider this is: the provider's person
+    /// approves it before it runs, whatever their own level says. Set by
+    /// the relay ([`crate::GroupRequestRules`]); empty for most tasks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub first_time_groups: Vec<String>,
 }
 
 /// One candidate of a `SubmitTask`: who, and the input sealed for them

@@ -12,6 +12,9 @@ authors = ["VaultDB.ai"]
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Reads a group policy's frontmatter (`GroupRequestRules::read`); the
+# Nandi app and the relay use the same version
+serde_yaml = "0.9"
 # The text form of the stored enums (`as_str` and `FromStr`); the Nandi app
 # uses the same version
 strum = { version = "0.28", features = ["derive"] }

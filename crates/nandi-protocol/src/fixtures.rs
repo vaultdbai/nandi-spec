@@ -60,6 +60,7 @@ pub(crate) fn sealed_task() -> SealedTask {
         created_at: 5.0,
         deadline: Some(10.0),
         envelope: envelope(SealPurpose::Request),
+        first_time_groups: vec!["g_0123456789abcdef".into()],
     }
 }
 

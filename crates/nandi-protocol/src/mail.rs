@@ -134,8 +134,17 @@ pub enum TaskEvent {
         held: bool,
     },
     /// Requester: the relay wouldn't take it (nobody serves it there, a
-    /// bad attempt, a loop); `message` is the relay's own words
-    Refused { task_id: String, message: String },
+    /// bad attempt, a loop, a limit); `message` is the relay's own words.
+    /// `code` names a refusal a client tells in its own words
+    /// ([`crate::GROUP_DAILY_LIMIT`], [`crate::NEEDS_FIRST_TIME_APPROVAL`],
+    /// [`crate::NO_SHARED_GROUP`], the relay's daily limit); `None` for
+    /// the rest.
+    Refused {
+        task_id: String,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
+    },
     /// Requester: passed to the next candidate you sealed it for
     FailedOver {
         task_id: String,
@@ -224,6 +233,14 @@ pub(crate) mod tests {
                 event: TaskEvent::Refused {
                     task_id: "t1".into(),
                     message: "No agent i2/writer serves write".into(),
+                    code: None,
+                },
+            },
+            Delivery::Event {
+                event: TaskEvent::Refused {
+                    task_id: "t1".into(),
+                    message: "Over the group's limit".into(),
+                    code: Some(crate::GROUP_DAILY_LIMIT.into()),
                 },
             },
             Delivery::Event {
@@ -288,7 +305,35 @@ pub(crate) mod tests {
             .iter()
             .map(|d| d.envelopes().len())
             .collect();
-        assert_eq!(counts, vec![1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1]);
+        assert_eq!(counts, vec![1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1]);
+    }
+
+    #[test]
+    fn new_fields_are_left_out_when_empty_and_default_when_missing() {
+        let mut task = sealed_task();
+        task.first_time_groups.clear();
+        let value = serde_json::to_value(&task).unwrap();
+        assert!(value.get("firstTimeGroups").is_none(), "{value}");
+        assert_eq!(
+            serde_json::from_value::<SealedTask>(value).unwrap(),
+            task,
+            "a task without the field reads"
+        );
+        assert_eq!(
+            serde_json::to_value(sealed_task()).unwrap()["firstTimeGroups"],
+            json!(["g_0123456789abcdef"])
+        );
+        let refused: TaskEvent =
+            serde_json::from_value(json!({"event": "refused", "taskId": "t1", "message": "No"}))
+                .unwrap();
+        assert_eq!(
+            refused,
+            TaskEvent::Refused {
+                task_id: "t1".into(),
+                message: "No".into(),
+                code: None,
+            }
+        );
     }
 
     #[test]
