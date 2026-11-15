@@ -34,6 +34,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use strum::{EnumDiscriminants, IntoStaticStr, VariantArray};
 
 use crate::card::AgentCard;
 use crate::directory::{MemberRecord, PeopleMatch};
@@ -47,11 +48,20 @@ use crate::routing::{RequestKind, RoutePlan, RoutingQuery};
 use crate::task::{ReasonKind, ResultReport, TaskAttempt, TaskState};
 use crate::time::Timestamp;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// One WebSocket frame, either way. Each kind of message has the protocol
+/// version it appeared in ([`MessageKind::since`]): a peer only sends a
+/// message the other side's version knows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, EnumDiscriminants)]
 #[serde(
     tag = "type",
     rename_all = "snake_case",
     rename_all_fields = "camelCase"
+)]
+#[strum_discriminants(
+    name(MessageKind),
+    doc = "Which [`RelayMessage`] a frame is, without its fields. Its text (strum) is its `type` tag.",
+    derive(VariantArray, IntoStaticStr),
+    strum(serialize_all = "snake_case")
 )]
 pub enum RelayMessage {
     // Provider → relay
@@ -305,6 +315,57 @@ pub enum RelayMessage {
     },
 }
 
+impl MessageKind {
+    /// Every kind, in the enum's order
+    pub const ALL: &'static [Self] = <Self as VariantArray>::VARIANTS;
+
+    /// The [`crate::PROTOCOL_VERSION`] that brought this message in its
+    /// shape today. A peer at an older version can't read it.
+    ///
+    /// Adding a message: its line here says the version it comes with (the
+    /// new [`crate::PROTOCOL_VERSION`]). Never lower a line, and never raise
+    /// one without a version bump.
+    pub const fn since(self) -> u32 {
+        match self {
+            // Presence and registration, before versions were numbered
+            Self::RegisterInstance
+            | Self::Heartbeat
+            | Self::Deregister
+            | Self::QueryCapability
+            | Self::Registered
+            | Self::CapabilityResult
+            | Self::Error
+            | Self::RegisterGateway
+            | Self::UpdatePresence
+            | Self::CapabilityPresenceQuery
+            | Self::CapabilityPresenceResponse => 1,
+            // The member directory and people search
+            Self::QueryDirectory | Self::Directory | Self::FindPeople | Self::PeopleMatches => 2,
+            // Sealed payloads and pinned keys
+            Self::TaskResult | Self::PublicKeysQuery | Self::PublicKeysResult => 4,
+            // Routing at the relay
+            Self::RouteQuery | Self::RoutePlan => 5,
+            // The team brain: store-and-forward, reassignment, handovers
+            Self::SubmitTask
+            | Self::Deliver
+            | Self::Ack
+            | Self::InboxSync
+            | Self::Peer
+            | Self::Reassign
+            | Self::ReassignResult
+            | Self::DutyWatch
+            | Self::DutyReport => 6,
+            // Groups
+            Self::GroupRequest | Self::GroupReply | Self::GroupChanged => 7,
+        }
+    }
+
+    /// Whether a peer speaking `version` can read this message
+    pub const fn known_at(self, version: u32) -> bool {
+        self.since() <= version
+    }
+}
+
 /// Task lifecycle and clarification traffic between requester and
 /// provider, tagged by `kind`. Free text, questions, answers and results
 /// go in an `envelope` sealed for the target (see [`crate::content`]); the
@@ -455,6 +516,11 @@ pub const NOT_A_PARTY: &str = "not_a_party";
 pub const UNKNOWN_TASK: &str = "unknown_task";
 
 impl RelayMessage {
+    /// Which message this is
+    pub fn kind(&self) -> MessageKind {
+        MessageKind::from(self)
+    }
+
     /// Every envelope it carries (to check [`crate::MAX_ENVELOPE_BYTES`])
     pub fn envelopes(&self) -> Vec<&Envelope> {
         match self {
@@ -744,6 +810,19 @@ mod tests {
                     no_route: Some(NoRoute::NotTakingRequests),
                 },
             },
+            RelayMessage::UpdatePresence {
+                instance_id: "i1".into(),
+                capabilities: vec![],
+                tools: vec!["web-search".into()],
+            },
+            RelayMessage::CapabilityPresenceQuery {
+                capability_id: ALL_CAPABILITIES.into(),
+                requester_instance: "i2".into(),
+            },
+            RelayMessage::CapabilityPresenceResponse {
+                capability_id: "find-papers".into(),
+                providers: vec![],
+            },
         ]
         .into_iter()
         .chain(
@@ -884,6 +963,110 @@ mod tests {
             plain.to_json().unwrap(),
             r#"{"type":"error","code":"unauthorized","message":"bad token"}"#
         );
+    }
+
+    /// Every message kind the releases in the window speak: its `type`,
+    /// the version it came with, and the version that dropped it (`None`:
+    /// still spoken). Adding a message adds a line; dropping one fills in
+    /// its last column and keeps the line until no release in the window
+    /// speaks it.
+    const SPOKEN: &[(&str, u32, Option<u32>)] = &[
+        ("register_instance", 1, None),
+        ("heartbeat", 1, None),
+        ("deregister", 1, None),
+        ("task_result", 4, None),
+        ("query_capability", 1, None),
+        ("submit_task", 6, None),
+        ("registered", 1, None),
+        ("capability_result", 1, None),
+        ("error", 1, None),
+        ("deliver", 6, None),
+        ("ack", 6, None),
+        ("inbox_sync", 6, None),
+        ("public_keys_query", 4, None),
+        ("public_keys_result", 4, None),
+        ("register_gateway", 1, None),
+        ("group_request", 7, None),
+        ("group_reply", 7, None),
+        ("group_changed", 7, None),
+        ("query_directory", 2, None),
+        ("directory", 2, None),
+        ("find_people", 2, None),
+        ("people_matches", 2, None),
+        ("peer", 6, None),
+        ("reassign", 6, None),
+        ("reassign_result", 6, None),
+        ("duty_watch", 6, None),
+        ("duty_report", 6, None),
+        ("route_query", 5, None),
+        ("route_plan", 5, None),
+        ("update_presence", 1, None),
+        ("capability_presence_query", 1, None),
+        ("capability_presence_response", 1, None),
+    ];
+
+    #[test]
+    fn every_message_kind_has_a_version_in_range() {
+        for kind in MessageKind::ALL {
+            let since = kind.since();
+            assert!(
+                (1..=crate::PROTOCOL_VERSION).contains(&since),
+                "{kind:?} since {since}"
+            );
+            assert!(
+                kind.known_at(since) && !kind.known_at(since - 1),
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_kinds_text_is_its_type_tag_and_the_samples_cover_every_kind() {
+        let mut seen = Vec::new();
+        for message in every_message() {
+            let value = serde_json::to_value(&message).unwrap();
+            let name: &str = message.kind().into();
+            assert_eq!(value["type"], name);
+            seen.push(message.kind());
+        }
+        for kind in MessageKind::ALL {
+            assert!(seen.contains(kind), "no sample of {kind:?}");
+        }
+    }
+
+    #[test]
+    fn versions_change_only_with_the_window() {
+        // Every kind spoken today is in the table, at its version
+        for kind in MessageKind::ALL {
+            let name: &str = kind.into();
+            let line = SPOKEN.iter().find(|(spoken, _, _)| *spoken == name);
+            assert_eq!(
+                line,
+                Some(&(name, kind.since(), None)),
+                "{name}: add its line to SPOKEN, or bump the version to change it"
+            );
+        }
+        // A dropped kind is gone from the enum only once the oldest version
+        // the window supports no longer speaks it
+        for (name, _, dropped_in) in SPOKEN {
+            let current = MessageKind::ALL
+                .iter()
+                .any(|kind| <&str>::from(kind) == *name);
+            match dropped_in {
+                None => assert!(
+                    current,
+                    "{name} was removed: fill in the version that dropped it"
+                ),
+                Some(dropped_in) => {
+                    assert!(!current, "{name} is still spoken");
+                    assert!(
+                        *dropped_in <= crate::MIN_SUPPORTED_PROTOCOL,
+                        "{name} was dropped in {dropped_in}, but clients at {} still speak it",
+                        crate::MIN_SUPPORTED_PROTOCOL
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -14,12 +14,22 @@
 //! | ---------------------------------------------------- | ----------------------------------- |
 //! | A new field with `#[serde(default)]`                 | Nothing: no bump                    |
 //! | A new message type, or a field renamed or retyped    | Bump [`PROTOCOL_VERSION`]           |
-//! | A relay stops speaking an old shape it used to read  | Raise [`MIN_SUPPORTED_PROTOCOL`]    |
 //!
-//! After a bump, keep [`MIN_SUPPORTED_PROTOCOL`] where it is only when
-//! the relay still reads and answers every older version in the range
-//! the way that version expects. A client never receives a message type
-//! it doesn't know: an older client would fail to parse it.
+//! # One version back, both ways
+//!
+//! Each release talks to the one before it: a relay at version N accepts
+//! clients at N - 1, and a client at N works with a relay at N - 1. So
+//! [`MIN_SUPPORTED_PROTOCOL`] is always `PROTOCOL_VERSION - 1` (checked at
+//! compile time, see [`oldest_supported`]). Each side sends the other only
+//! the messages its version knows ([`crate::MessageKind::since`]); a
+//! client hides what an older relay can't do yet.
+//!
+//! A shape can be dropped only once every version in the range has
+//! stopped using it: one release after the version that replaced it.
+//!
+//! The window starts at version 8. Version 7 accepts only itself:
+//! a version 6 client can't read `GroupChanged`, which a relay sends
+//! unasked, and no relay before 7 was released.
 
 /// The wire version this crate speaks.
 ///
@@ -48,15 +58,28 @@
 ///   and `/health`
 pub const PROTOCOL_VERSION: u32 = 7;
 
-/// The oldest client version a relay of this crate's version accepts.
-///
-/// Equal to [`PROTOCOL_VERSION`]: version 7 added `GroupChanged`, which
-/// a relay pushes to group members unasked, so a version 6 client would
-/// fail to parse it.
+/// The oldest client version a relay of this crate's version accepts,
+/// and the oldest relay version a client of it works with:
+/// [`oldest_supported`]`(`[`PROTOCOL_VERSION`]`)`.
 pub const MIN_SUPPORTED_PROTOCOL: u32 = 7;
 
-// A range that accepts nothing would refuse every client
-const _: () = assert!(MIN_SUPPORTED_PROTOCOL <= PROTOCOL_VERSION);
+/// The first version that must talk to the one before it
+const FIRST_WINDOWED_VERSION: u32 = 8;
+
+/// The oldest version a release at `current` talks to: the one before it,
+/// from version 8 on, and itself before that
+pub const fn oldest_supported(current: u32) -> u32 {
+    if current >= FIRST_WINDOWED_VERSION {
+        current - 1
+    } else {
+        current
+    }
+}
+
+// After a bump, MIN_SUPPORTED_PROTOCOL follows: one version back, never
+// more (no legacy shapes) and never less (no release left unable to talk
+// to the one before it)
+const _: () = assert!(MIN_SUPPORTED_PROTOCOL == oldest_supported(PROTOCOL_VERSION));
 
 /// The versions one side accepts from the other: `min_supported..=current`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +147,15 @@ mod tests {
             assert_eq!(range.accepts(version), accepted, "version {version}");
             assert_eq!(range.mismatch(version), gap, "version {version}");
         }
+    }
+
+    #[test]
+    fn a_release_talks_to_the_one_before_it_from_version_8() {
+        let cases = [(1, 1), (6, 6), (7, 7), (8, 7), (9, 8), (20, 19)];
+        for (current, oldest) in cases {
+            assert_eq!(oldest_supported(current), oldest, "version {current}");
+        }
+        assert_eq!(MIN_SUPPORTED_PROTOCOL, oldest_supported(PROTOCOL_VERSION));
     }
 
     #[test]

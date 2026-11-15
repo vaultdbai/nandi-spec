@@ -73,8 +73,8 @@ pub use keys::{
 };
 pub use mail::{Delivery, FailoverCause, TaskEvent};
 pub use message::{
-    PeerMessage, RelayMessage, ALL_CAPABILITIES, NOT_A_PARTY, TASK_ENDED, UNKNOWN_TASK,
-    VERSION_MISMATCH,
+    MessageKind, PeerMessage, RelayMessage, ALL_CAPABILITIES, NOT_A_PARTY, TASK_ENDED,
+    UNKNOWN_TASK, VERSION_MISMATCH,
 };
 pub use presence::{CapabilityPresence, InstancePresence, ProviderKind, ProviderPresence};
 pub use routing::{
@@ -86,7 +86,9 @@ pub use task::{
     TaskState, TaskStatus,
 };
 pub use time::{now_ms, Timestamp};
-pub use version::{ProtocolRange, VersionGap, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
+pub use version::{
+    oldest_supported, ProtocolRange, VersionGap, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION,
+};
 
 #[cfg(test)]
 pub(crate) mod fixtures;
