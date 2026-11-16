@@ -575,7 +575,7 @@ checksum = "c2a86d3146ed3995b5913c414f6664344b9617457320782e64f0bb44afd49d74"
 
 [[package]]
 name = "nandi-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "glob",
  "jiff",
@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "nandi-seal"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -856,7 +856,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "registry-schema"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "jsonschema",
  "serde_json",
