@@ -48,7 +48,7 @@ lp("nandi-seal-v1 aad") ‖ lp(task_id) ‖ lp(seq as u64 BE) ‖ lp(from) ‖ l
   ‖ lp(purpose) ‖ lp(capability) ‖ lp(sender_key_id) ‖ lp(recipient_key_id)
 ```
 
-`purpose` is its wire name (`request`, `result`, `clarification`, `answer`, `note`).
+`purpose` is its wire name (`request`, `result`, `clarification`, `answer`, `note`, `ownDevice`).
 
 **Signed message.** The author signs, with Ed25519:
 

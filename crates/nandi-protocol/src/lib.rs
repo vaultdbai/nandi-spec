@@ -6,6 +6,8 @@
 //!   `/relay/enroll`) and connection constants
 //! - [`card`], [`gateway`], [`presence`]: what instances publish about
 //!   themselves
+//! - [`devices`]: a person's own devices (a phone), paired with their
+//!   Nandi, and the sealed envelopes between them
 //! - [`directory`]: the member directory, availability and people search
 //! - [`group`]: groups, invites, group policies and visibility by group
 //! - [`group_rules`]: the `requests:` rules a relay reads from a group's
@@ -29,6 +31,7 @@
 pub mod card;
 pub mod clarification;
 pub mod content;
+pub mod devices;
 pub mod directory;
 pub mod duty;
 pub mod gateway;
@@ -49,6 +52,12 @@ pub use clarification::{ClarificationRequest, ClarificationResponse, Question};
 pub use content::{
     AnswerContent, ClarificationContent, NoteContent, RequestContent, ResultContent, SealedContent,
     LIFECYCLE_CAPABILITY,
+};
+pub use devices::{
+    is_device_id, own_envelope_fault, DeviceClaimRequest, DeviceClaimResponse, DeviceOp,
+    DeviceOutcome, DeviceState, OwnDevice, PairingInvite, DEVICE_CLAIM_PATH, DEVICE_ID_PREFIX,
+    DEVICE_KEYS_MISMATCH, DEVICE_LIMIT, DEVICE_NOT_FOUND, DEVICE_OFFLINE, DEVICE_PENDING,
+    DEVICE_STATE, DEVICE_UNAUTHORIZED, NOT_OWN_DEVICE, PAIRING_INVALID, PAIRING_TTL_MS,
 };
 pub use directory::{
     Availability, AvailabilityStatus, MatchedAgent, MemberRecord, PeopleMatch, ServedCapability,

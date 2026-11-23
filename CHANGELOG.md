@@ -2,6 +2,15 @@
 
 What changed in each release of the Nandi spec crates (`nandi-protocol`, `nandi-seal`, `registry-schema`) and the registry schemas.
 
+## Unreleased
+
+`PROTOCOL_VERSION` goes from 7 to 8. `MIN_SUPPORTED_PROTOCOL` stays 7: this is the first release that talks to the one before it.
+
+### New
+
+- **Own devices (protocol 8).** A person's phone pairs with their own Nandi and exchanges sealed envelopes with it through the relay (`devices`): `DeviceRequest` and `DeviceReply` (`DeviceOp`: list, pair, confirm, revoke, revoke all), `DeviceClaimed`, `RegisterDevice` and `DeviceRegistered`, `DeviceHeartbeat`, `OwnEnvelope` and `OwnDelivery`. The pairing QR code is a `PairingInvite`; the phone claims its code at `DEVICE_CLAIM_PATH`. `own_envelope_fault` checks an envelope stays on its channel.
+- `SealPurpose::OwnDevice` (`ownDevice`), for envelopes between a Nandi and its own devices.
+
 ## 0.2.0 (2026-11-16)
 
 `PROTOCOL_VERSION` goes from 2 to 7. `MIN_SUPPORTED_PROTOCOL` is 7.

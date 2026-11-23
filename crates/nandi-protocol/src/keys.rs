@@ -79,6 +79,9 @@ pub enum SealPurpose {
     Answer,
     /// Free text on a lifecycle message (a note, a reason)
     Note,
+    /// Between a Nandi and its person's own device (protocol 8, see
+    /// [`crate::devices`])
+    OwnDevice,
 }
 
 impl SealPurpose {
@@ -90,6 +93,7 @@ impl SealPurpose {
             Self::Clarification => "clarification",
             Self::Answer => "answer",
             Self::Note => "note",
+            Self::OwnDevice => "ownDevice",
         }
     }
 }
@@ -247,6 +251,7 @@ mod tests {
             SealPurpose::Clarification,
             SealPurpose::Answer,
             SealPurpose::Note,
+            SealPurpose::OwnDevice,
         ] {
             assert_eq!(serde_json::to_value(purpose).unwrap(), purpose.as_str());
         }

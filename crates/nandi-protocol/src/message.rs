@@ -26,6 +26,11 @@
 //! (`DutyWatch`, `DutyReport`, see [`crate::duty`]) are decided at the
 //! relay too.
 //!
+//! A person's own devices (a phone paired with their Nandi) connect with
+//! `RegisterDevice` and exchange sealed envelopes with that Nandi only
+//! (`OwnEnvelope` → `OwnDelivery`, live); the Nandi pairs, lists and
+//! revokes them (`DeviceRequest` → `DeviceReply`). See [`crate::devices`].
+//!
 //! Offline: every request here has a reply or a timeout on the client; a
 //! client that isn't connected reports "not connected" and keeps working
 //! (cards it last saw, its own agents locally). What it sent before waits
@@ -37,6 +42,7 @@ use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, IntoStaticStr, VariantArray};
 
 use crate::card::AgentCard;
+use crate::devices::{DeviceOp, DeviceOutcome, OwnDevice};
 use crate::directory::{MemberRecord, PeopleMatch};
 use crate::duty::DutyState;
 use crate::gateway::GatewayCard;
@@ -190,6 +196,50 @@ pub enum RelayMessage {
     GroupChanged {
         group_id: String,
         change: GroupChange,
+    },
+
+    // Own devices (see `devices`)
+    /// Nandi → relay: about its own devices (never from a device)
+    DeviceRequest {
+        request_id: String,
+        op: DeviceOp,
+    },
+    /// Relay → Nandi, for the `DeviceRequest` with this `request_id`
+    DeviceReply {
+        request_id: String,
+        outcome: DeviceOutcome,
+    },
+    /// Relay → Nandi (live): a phone claimed its pairing code; confirm its
+    /// keys with `DeviceOp::Confirm`
+    DeviceClaimed {
+        device: OwnDevice,
+    },
+    /// Device → relay: the first frame of a device connection, with the
+    /// token from its claim
+    RegisterDevice {
+        device_id: String,
+        token: String,
+        /// The [`crate::PROTOCOL_VERSION`] the device speaks
+        protocol_version: u32,
+    },
+    /// Relay → device: registered; its only recipient is `home_instance`
+    DeviceRegistered {
+        device_id: String,
+        home_instance: String,
+    },
+    /// Device → relay, every 30s: still here
+    DeviceHeartbeat {},
+    /// Nandi or device → relay: an envelope for the other side of an
+    /// own-device channel (see [`crate::devices`]), delivered live or
+    /// refused with [`crate::DEVICE_OFFLINE`]
+    OwnEnvelope {
+        envelope: Envelope,
+    },
+    /// Relay → the envelope's recipient
+    OwnDelivery {
+        envelope: Envelope,
+        /// When the relay took it (epoch ms)
+        received_at: Timestamp,
     },
 
     // The member directory and people search (see `directory`)
@@ -357,6 +407,15 @@ impl MessageKind {
             | Self::DutyReport => 6,
             // Groups
             Self::GroupRequest | Self::GroupReply | Self::GroupChanged => 7,
+            // Own devices
+            Self::DeviceRequest
+            | Self::DeviceReply
+            | Self::DeviceClaimed
+            | Self::RegisterDevice
+            | Self::DeviceRegistered
+            | Self::DeviceHeartbeat
+            | Self::OwnEnvelope
+            | Self::OwnDelivery => 8,
         }
     }
 
@@ -532,6 +591,7 @@ impl RelayMessage {
                 envelope, request, ..
             } => envelope.iter().chain(request.as_deref()).collect(),
             Self::DutyReport { envelope, .. } => envelope.iter().collect(),
+            Self::OwnEnvelope { envelope } | Self::OwnDelivery { envelope, .. } => vec![envelope],
             _ => Vec::new(),
         }
     }
@@ -556,6 +616,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::devices::OwnDevice;
     use crate::directory::{Availability, MatchedAgent, ServedCapability};
     use crate::duty::DutyState;
     use crate::fixtures::{card, envelope, gateway_card, report};
@@ -564,6 +625,8 @@ mod tests {
     use crate::routing::{
         NoRoute, RequestKind, RouteCandidate, RouteReason, RouteStrategy, RouteTarget, RoutingHints,
     };
+
+    const DEVICE: &str = "device.0123456789abcdef0123456789abcdef";
 
     fn every_message() -> Vec<RelayMessage> {
         vec![
@@ -647,6 +710,50 @@ mod tests {
             RelayMessage::GroupChanged {
                 group_id: "g1".into(),
                 change: crate::group::GroupChange::PolicyChanged { version: 2 },
+            },
+            RelayMessage::DeviceRequest {
+                request_id: "d1".into(),
+                op: crate::devices::DeviceOp::Pair,
+            },
+            RelayMessage::DeviceReply {
+                request_id: "d1".into(),
+                outcome: crate::devices::DeviceOutcome::Pairing {
+                    device_id: DEVICE.into(),
+                    code: "code".into(),
+                    expires_at: 9.0,
+                },
+            },
+            RelayMessage::DeviceClaimed {
+                device: OwnDevice {
+                    device_id: DEVICE.into(),
+                    state: crate::devices::DeviceState::Claimed,
+                    created_at: 1.0,
+                    expires_at: Some(9.0),
+                    public_keys: Some(PublicKeys {
+                        signing: "s".repeat(43),
+                        sealing: "x".repeat(43),
+                    }),
+                    paired_at: None,
+                    last_seen_at: None,
+                    online: false,
+                },
+            },
+            RelayMessage::RegisterDevice {
+                device_id: DEVICE.into(),
+                token: "tok".into(),
+                protocol_version: crate::PROTOCOL_VERSION,
+            },
+            RelayMessage::DeviceRegistered {
+                device_id: DEVICE.into(),
+                home_instance: "i1".into(),
+            },
+            RelayMessage::DeviceHeartbeat {},
+            RelayMessage::OwnEnvelope {
+                envelope: envelope(SealPurpose::OwnDevice),
+            },
+            RelayMessage::OwnDelivery {
+                envelope: envelope(SealPurpose::OwnDevice),
+                received_at: 5.0,
             },
             RelayMessage::CapabilityResult {
                 capability: "find-papers".into(),
@@ -989,6 +1096,14 @@ mod tests {
         ("group_request", 7, None),
         ("group_reply", 7, None),
         ("group_changed", 7, None),
+        ("device_request", 8, None),
+        ("device_reply", 8, None),
+        ("device_claimed", 8, None),
+        ("register_device", 8, None),
+        ("device_registered", 8, None),
+        ("device_heartbeat", 8, None),
+        ("own_envelope", 8, None),
+        ("own_delivery", 8, None),
         ("query_directory", 2, None),
         ("directory", 2, None),
         ("find_people", 2, None),
@@ -1154,8 +1269,8 @@ mod tests {
             .map(|message| message.envelopes().len())
             .collect();
         // SubmitTask 2, TaskResult 1, Reassign 2, DutyReport 1, peers 4,
-        // deliveries 5
-        assert_eq!(counts.iter().sum::<usize>(), 15, "{counts:?}");
+        // deliveries 5, OwnEnvelope 1, OwnDelivery 1
+        assert_eq!(counts.iter().sum::<usize>(), 17, "{counts:?}");
         for message in every_message() {
             assert!(message.envelopes_within_limit());
         }

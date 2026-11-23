@@ -56,7 +56,12 @@
 /// - 7: groups (`GroupRequest` → `GroupReply`, `GroupChanged`, see
 ///   [`crate::group`]), the relay's [`crate::Visibility`] on `Registered`
 ///   and `/health`
-pub const PROTOCOL_VERSION: u32 = 7;
+/// - 8: own devices (`DeviceRequest` → `DeviceReply`, `DeviceClaimed`,
+///   `RegisterDevice` → `DeviceRegistered`, `DeviceHeartbeat`,
+///   `OwnEnvelope` → `OwnDelivery`, see [`crate::devices`]) and the seal
+///   purpose `ownDevice`. The first release that talks to the one before
+///   it
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// The oldest client version a relay of this crate's version accepts,
 /// and the oldest relay version a client of it works with:
