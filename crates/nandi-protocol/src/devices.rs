@@ -37,7 +37,9 @@
 //! `OwnEnvelope { envelope }` (Nandi or device → relay) is delivered live
 //! as `OwnDelivery { envelope, receivedAt }`, or refused with
 //! [`DEVICE_OFFLINE`] when the other side isn't connected: nothing is
-//! stored. The envelope is a sealed and signed [`Envelope`] whose
+//! stored. A refused envelope's `Error` ([`DEVICE_OFFLINE`],
+//! [`NOT_OWN_DEVICE`], `rate_limited`) names its channel, the device ID,
+//! in `taskId`. The envelope is a sealed and signed [`Envelope`] whose
 //! [`crate::SealedFor`] is:
 //!
 //! | Field        | Value                                                |
