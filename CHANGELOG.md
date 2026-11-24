@@ -2,7 +2,7 @@
 
 What changed in each release of the Nandi spec crates (`nandi-protocol`, `nandi-seal`, `registry-schema`) and the registry schemas.
 
-## Unreleased
+## 0.3.0 (2026-11-24)
 
 `PROTOCOL_VERSION` goes from 7 to 8. `MIN_SUPPORTED_PROTOCOL` stays 7: this is the first release that talks to the one before it.
 

@@ -1,6 +1,6 @@
 [package]
 name = "nandi-seal"
-version = "0.2.0"
+version = "0.3.0"
 description = "Nandi's end-to-end seal: per-device keys, sealed envelopes and signed content"
 edition.workspace = true
 rust-version.workspace = true

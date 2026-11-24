@@ -1,6 +1,6 @@
 [package]
 name = "registry-schema"
-version = "0.2.0"
+version = "0.3.0"
 description = "Tests for the registry JSON Schemas in registry-schema/"
 publish = false
 edition.workspace = true
